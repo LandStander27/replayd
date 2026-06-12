@@ -2,5 +2,39 @@
 name = "replayd"
 version = "0.1.0"
 edition = "2024"
+default-run = "replayd"
+
+[[bin]]
+name = "replayd-hook"
+path = "src/bin/hook.rs"
 
 [dependencies]
+version = { path = "version" }
+
+clap = { version = "4.6.1", features = ["derive"] }
+color-eyre = "0.6.5"
+tokio = { version = "1.52.3", features = [
+	"rt",
+	"rt-multi-thread",
+	"signal",
+	"macros",
+	"sync",
+	"process",
+] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+relm4 = { version = "0.11.0", features = ["gnome_50", "libadwaita"] }
+tracing-error = "0.2.1"
+ksni = "0.3.5"
+image = "0.25.10"
+redb = { version = "4.1.0", features = ["uuid"] }
+serde = { version = "1.0.228", features = ["derive"] }
+dirs = "6.0.0"
+serde_json = "1.0.150"
+display-info = "0.5.9"
+async-trait = "0.1.89"
+ashpd = { version = "0.13.11", features = ["tracing", "gtk4_wayland", "global_shortcuts", "file_chooser"] }
+futures = "0.3.32"
+nix = { version = "0.31.3", features = ["signal"] }
+strum = { version = "0.28.0", features = ["derive"] }
+url = "2.5.8"
