@@ -18,7 +18,7 @@ impl ksni::Tray for Tray {
 
 	fn icon_pixmap(&self) -> Vec<ksni::Icon> {
 		static ICON: LazyLock<ksni::Icon> = LazyLock::new(|| {
-			let img = image::load_from_memory_with_format(include_bytes!("../../icon.png"), image::ImageFormat::Png).expect("valid image");
+			let img = image::load_from_memory_with_format(include_bytes!("../../assets/icon.png"), image::ImageFormat::Png).expect("valid image");
 			let (width, height) = img.dimensions();
 			let mut data = img.into_rgba8().into_vec();
 			assert_eq!(data.len() % 4, 0);

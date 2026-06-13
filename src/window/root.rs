@@ -32,6 +32,7 @@ pub enum Message {
 	Close,
 	ShowWindow,
 	Exit,
+	ShowAbout,
 	Init,
 	Error(String),
 	LoadClips,
@@ -54,6 +55,16 @@ pub enum Message {
 	F2Pressed,
 	DelPressed,
 }
+
+relm4::new_action_group!(ClipActionGroup, "clip");
+relm4::new_stateless_action!(ClipOpen, ClipActionGroup, "open");
+relm4::new_stateless_action!(ClipOpenFolder, ClipActionGroup, "open-folder");
+relm4::new_stateless_action!(ClipRename, ClipActionGroup, "rename");
+relm4::new_stateless_action!(ClipDelete, ClipActionGroup, "delete");
+
+relm4::new_action_group!(WindowActionGroup, "app");
+relm4::new_stateless_action!(AppQuit, WindowActionGroup, "quit");
+relm4::new_stateless_action!(AppAbout, WindowActionGroup, "about");
 
 #[relm4::component(async)]
 impl AsyncComponent for App {
@@ -428,6 +439,16 @@ impl AsyncComponent for App {
 						set_stack: Some(&stack),
 						set_policy: adw::ViewSwitcherPolicy::Wide,
 					},
+
+					pack_end = &gtk::MenuButton {
+						#[wrap(Some)]
+						set_menu_model = &gio::Menu {
+							append: (Some("Quit"), Some(&AppQuit::action_name())),
+							append: (Some("About Replayd"), Some(&AppAbout::action_name())),
+						},
+						set_icon_name: "open-menu-symbolic",
+						set_tooltip_text: Some("Main Menu")
+					}
 				},
 
 				#[wrap(Some)]
@@ -598,6 +619,19 @@ impl AsyncComponent for App {
 		return AsyncComponentParts { model: app, widgets };
 	}
 
+	async fn post_view() {
+		let mut group = RelmActionGroup::<WindowActionGroup>::new();
+		group.add_action(RelmAction::<AppQuit>::new_stateless({
+			let sender = sender.clone();
+			move |_| sender.input(Message::Exit)
+		}));
+		group.add_action(RelmAction::<AppAbout>::new_stateless({
+			let sender = sender.clone();
+			move |_| sender.input(Message::ShowAbout)
+		}));
+		group.register_for_main_application();
+	}
+
 	async fn update(&mut self, msg: Self::Input, sender: AsyncComponentSender<Self>, _window: &adw::ApplicationWindow) {
 		if let Err(e) = self.update(msg, sender).await {
 			error!(?e);
@@ -613,12 +647,6 @@ impl AsyncComponent for App {
 	}
 }
 
-relm4::new_action_group!(ClipActionGroup, "clip");
-relm4::new_stateless_action!(ClipOpen, ClipActionGroup, "open");
-relm4::new_stateless_action!(ClipOpenFolder, ClipActionGroup, "open-folder");
-relm4::new_stateless_action!(ClipRename, ClipActionGroup, "rename");
-relm4::new_stateless_action!(ClipDelete, ClipActionGroup, "delete");
-
 impl App {
 	fn setup_clips_factory(sender: relm4::Sender<Message>, settings: &Settings) -> (gio::ListStore, gtk::SignalListItemFactory, gtk::MultiSelection) {
 		let clips_store = gio::ListStore::new::<ClipObject>();
@@ -633,14 +661,14 @@ impl App {
 				relm4::view! {
 					#[name(danger_section)]
 					gio::Menu {
-						append: (Some("Delete"), Some("clip.delete")),
+						append: (Some("Delete"), Some(&ClipDelete::action_name())),
 					},
 
 					#[name(menu_model)]
 					gio::Menu {
-						append: (Some("Open"), Some("clip.open")),
-						append: (Some("Rename"), Some("clip.rename")),
-						append: (Some("Show in Files"), Some("clip.open-folder")),
+						append: (Some("Open"), Some(&ClipOpen::action_name())),
+						append: (Some("Rename"), Some(&ClipRename::action_name())),
+						append: (Some("Show in Files"), Some(&ClipOpenFolder::action_name())),
 						append_section: (None, &danger_section),
 					},
 
@@ -819,6 +847,20 @@ impl App {
 		let tx = sender.input_sender();
 		match msg {
 			Message::Void => {}
+			Message::ShowAbout => {
+				relm4::view! {
+					adw::AboutDialog {
+						set_application_icon: "dev.land.Replayd",
+						set_license_type: gtk::License::MitX11,
+						set_website: "https://codeberg.org/Land/replayd",
+						set_version: version::version,
+						set_developer_name: "Sam Jones",
+						set_issue_url: "https://codeberg.org/Land/replayd/issues",
+						set_application_name: "Replayd",
+						present: Some(&self.window)
+					}
+				}
+			}
 			Message::DeleteDb => self.delete_db_dialog.emit(ConfirmDialogMessage::Show),
 			Message::DeleteDbConfirm => {
 				let path = db::db_path().context("could not get db path")?;
