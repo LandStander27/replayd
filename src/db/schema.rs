@@ -142,6 +142,7 @@ pub struct Settings {
 	pub frame_rate: FrameRate,
 	pub quality: Quality,
 	pub output_dir: PathBuf,
+	pub show_end_title_buttons: bool,
 }
 
 impl Default for Settings {
@@ -159,6 +160,7 @@ impl Default for Settings {
 			} else {
 				format!("{}/Videos/Clips", std::env::var("HOME").unwrap()).into()
 			},
+			show_end_title_buttons: true,
 		};
 	}
 }

@@ -63,7 +63,8 @@ impl AsyncComponent for App {
 	type CommandOutput = Message;
 
 	view! {
-		stack = &adw::ViewStack {
+		#[name(stack)]
+		&adw::ViewStack {
 			add_titled_with_icon[Some("home"), "Home", "go-home-symbolic"] = &gtk::Box {
 				set_orientation: gtk::Orientation::Vertical,
 				set_spacing: 8,
@@ -377,6 +378,25 @@ impl AsyncComponent for App {
 								connect_clicked => Message::DeleteDb
 							},
 						}
+					},
+					adw::PreferencesGroup {
+						set_title: "Window",
+						adw::SwitchRow {
+							set_title: "Show end title buttons",
+
+							#[watch]
+							set_active: app.settings.show_end_title_buttons,
+
+							connect_active_notify[sender, db] => move |x| {
+								let value = x.is_active();
+								if let Err(e) = db.write_settings(|s| s.show_end_title_buttons = value) {
+									error!(?e);
+									sender.input(Message::Error(format!("{e:#}")));
+								} else {
+									sender.input(Message::LoadSettings);
+								}
+							},
+						}
 					}
 				}
 			},
@@ -400,6 +420,9 @@ impl AsyncComponent for App {
 			adw::ToolbarView {
 				#[name(header_bar)]
 				add_top_bar = &adw::HeaderBar {
+					#[watch]
+					set_show_end_title_buttons: app.settings.show_end_title_buttons,
+
 					#[wrap(Some)]
 					set_title_widget = &adw::ViewSwitcher {
 						set_stack: Some(&stack),
