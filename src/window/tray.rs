@@ -43,11 +43,24 @@ impl ksni::Tray for Tray {
 		use ksni::menu::*;
 		return vec![
 			StandardItem {
+				label: "Toggle clipping".to_string(),
+				icon_name: "camera-video-symbolic".to_string(),
+				activate: Box::new(|this: &mut Self| this.tx.emit(Message::ToggleClipping)),
+				..Default::default()
+			}
+			.into(),
+			StandardItem {
+				label: "Save a clip".to_string(),
+				icon_name: "document-save-symbolic".to_string(),
+				activate: Box::new(|this: &mut Self| this.tx.emit(Message::SaveClip)),
+				..Default::default()
+			}
+			.into(),
+			MenuItem::Separator,
+			StandardItem {
 				label: "Exit".to_string(),
 				icon_name: "application-exit".to_string(),
-				activate: Box::new(|this: &mut Self| {
-					this.tx.send(Message::Exit).expect("main thread died");
-				}),
+				activate: Box::new(|this: &mut Self| this.tx.emit(Message::Exit)),
 				..Default::default()
 			}
 			.into(),

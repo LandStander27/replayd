@@ -64,7 +64,8 @@ impl AudioPlayer {
 		let sample_rate = decoder.sample_rate();
 		let samples = Arc::new(decoder.collect::<Vec<f32>>());
 
-		let stream = DeviceSinkBuilder::open_default_sink().context("could not open sink")?;
+		let mut stream = DeviceSinkBuilder::open_default_sink().context("could not open sink")?;
+		stream.log_on_drop(false);
 
 		return Ok(Self {
 			samples: SharedSamples::new(samples, channels, sample_rate),
