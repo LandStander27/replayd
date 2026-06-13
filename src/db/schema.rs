@@ -32,34 +32,20 @@ macro_rules! impl_serde {
 	};
 }
 
-// macro_rules! impl_display {
-// 	($ty:ty, {
-//     	$($name:tt => $s:literal),+ $(,)?
-//     }) => {
-// 		impl std::fmt::Display for $ty {
-// 			fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-// 				match self {
-// 					$(
-// 						<$ty>::$name => write!(f, $s)?,
-// 					)*
-// 				}
-// 				return Ok(());
-// 			}
-// 		}
-// 	};
-// }
+pub type ObjectId = u64;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Clip {
-	pub id: u64,
-	pub game: u64,
+	pub id: ObjectId,
+	pub game: Option<ObjectId>,
 	pub title: String,
-	pub path: String,
+	pub path_display: String,
+	pub path_uri: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Game {
-	pub id: i32,
+	pub id: ObjectId,
 	pub window_class: String,
 }
 
@@ -160,30 +146,6 @@ impl Default for Settings {
 		};
 	}
 }
-
-// impl_display!(Resolution, {
-// 	P1440 => "2560x1440",
-// 	P1080 => "1920x1080",
-// 	P720 => "1080x720"
-// });
-
-// impl_display!(Codec, {
-// 	H264 => "h264",
-// 	AV1 => "av1",
-// 	HEVC => "hevc",
-// });
-
-// impl_display!(Container, {
-// 	MP4 => "mp4",
-// 	MKV => "mkv",
-// });
-
-// impl_display!(Quality, {
-// 	Medium => "medium",
-// 	High => "high",
-// 	VeryHigh => "very_high",
-// 	Ultra => "ultra"
-// });
 
 impl_serde!(Clip);
 impl_serde!(Game);

@@ -1,9 +1,13 @@
 use crate::prelude::*;
 
+mod confirm_dialog;
 mod error_dialog;
+mod input_dialog;
+pub use confirm_dialog::{ConfirmDialog, ConfirmDialogMessage, ConfirmDialogResponse, ConfirmDialogSettings};
 pub use error_dialog::ErrorDialog;
+pub use input_dialog::{InputDialog, InputDialogMessage, InputDialogResponse, InputDialogSettings};
 
-#[relm4::widget_template]
+#[relm4::widget_template(pub)]
 impl WidgetTemplate for DialogTemplate {
 	view! {
 		#[name = "root"]

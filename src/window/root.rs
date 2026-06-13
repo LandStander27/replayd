@@ -1,5 +1,6 @@
 use ksni::TrayMethods;
 
+use super::clip::ClipObject;
 use crate::prelude::*;
 
 struct App {
@@ -15,6 +16,12 @@ struct App {
 	socket_listener: Option<Listener>,
 	shortcuts: Option<ShortcutsSession>,
 	settings: Settings,
+	clips_store: gio::ListStore,
+	clips_selection: gtk::MultiSelection,
+	confirm_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
+	input_dialog: AsyncController<InputDialog<adw::ApplicationWindow>>,
+	deleting_clips: Vec<ObjectId>,
+	renaming_clip: ObjectId,
 }
 
 #[derive(Debug)]
@@ -26,13 +33,22 @@ pub enum Message {
 	Exit,
 	Init,
 	Error(String),
+	LoadClips,
 	GamesLoaded(Vec<db::Game>),
 	GameSelected(DynamicIndex),
-	ClipReceived(String),
+	ClipReceived { path_uri: String, path: PathBuf },
 	SaveClip,
 	ToggleClipping,
 	PickOutputDir,
 	SetOutputDir(PathBuf),
+	DeleteClips(Vec<ObjectId>),
+	DeleteClipsConfirm,
+	RenameClip(ObjectId),
+	RenameClipConfirm(String),
+	OpenClipFolder(ObjectId),
+	OpenClip(ObjectId),
+	F2Pressed,
+	DelPressed,
 }
 
 #[relm4::component(async)]
@@ -100,6 +116,7 @@ impl AsyncComponent for App {
 						set_spacing: 2,
 
 						gtk::Label {
+							#[watch]
 							set_label: if app.recorder.is_active() { "Replay buffer active" } else { "Replay buffer inactive" },
 							set_halign: gtk::Align::Start,
 							add_css_class: "heading",
@@ -143,6 +160,47 @@ impl AsyncComponent for App {
 
 						connect_clicked => Message::ToggleClipping,
 					}
+				},
+
+				gtk::ScrolledWindow {
+					set_hexpand: true,
+					set_vexpand: true,
+					set_margin_start: 12,
+					set_margin_end: 12,
+					set_margin_bottom: 12,
+
+					gtk::GridView {
+						set_model: Some(&clips_selection),
+						set_factory: Some(&factory),
+						set_max_columns: 6,
+						set_min_columns: 1,
+						set_single_click_activate: false,
+
+						connect_activate[sender, clips_store] => move |_, pos| {
+							let obj = clips_store
+								.item(pos)
+								.unwrap()
+								.downcast::<ClipObject>()
+								.unwrap();
+							sender.input(Message::OpenClip(obj.clip().id));
+						},
+
+						add_controller = gtk::EventControllerKey {
+							connect_key_pressed[sender] => move |_, key, _, _| {
+								match key {
+									gdk::Key::F2 => {
+										sender.input(Message::F2Pressed);
+										glib::Propagation::Stop
+									}
+									gdk::Key::Delete => {
+										sender.input(Message::DelPressed);
+										glib::Propagation::Stop
+									}
+									_ => glib::Propagation::Proceed,
+								}
+							}
+						}
+					}
 				}
 			},
 			add_titled_with_icon[Some("settings"), "Settings", "emblem-system-symbolic"] = &gtk::Box {
@@ -150,8 +208,13 @@ impl AsyncComponent for App {
 					adw::PreferencesGroup {
 						set_title: "Replay buffer",
 						adw::SwitchRow {
-							set_title: "Enable replay buffer", // TODO: maybe remove
-							set_active: false,
+							set_title: "Enable replay buffer",
+
+							#[watch]
+							#[block_signal(toggle_handler)]
+							set_active: app.recorder.is_active(),
+
+							connect_active_notify => Message::ToggleClipping @toggle_handler,
 						},
 
 						adw::SpinRow {
@@ -220,6 +283,21 @@ impl AsyncComponent for App {
 							connect_selected_notify[db, sender] => move |x| {
 								let value = x.selected() as usize;
 								if let Err(e) = db.write_settings(|s| s.codec = Codec::from_repr(value).unwrap()) {
+									error!(?e);
+									sender.input(Message::Error(format!("{e:#}")));
+								} else {
+									sender.input(Message::LoadSettings);
+								}
+							}
+						},
+
+						adw::ComboRow {
+							set_title: "Container",
+							set_model: Some(&gtk::StringList::new(&["mp4", "mkv"])),
+							set_selected: app.settings.container as u32,
+							connect_selected_notify[db, sender] => move |x| {
+								let value = x.selected() as usize;
+								if let Err(e) = db.write_settings(|s| s.container = Container::from_repr(value).unwrap()) {
 									error!(?e);
 									sender.input(Message::Error(format!("{e:#}")));
 								} else {
@@ -365,9 +443,32 @@ impl AsyncComponent for App {
 			}
 		};
 
+		let (clips_store, factory, clips_selection) = App::setup_clips_factory(sender.input_sender().clone());
 		let app = App {
 			window: root.clone(),
 			error_dialog,
+			confirm_dialog: ConfirmDialog::builder()
+				.launch(ConfirmDialogSettings {
+					window: root.clone(),
+					title: "Are you sure you want to permanently delete this clip?".to_string(),
+					message: "If you delete a clip, it is permanently lost.".to_string(),
+					accept_label: "Delete".to_string(),
+					cancel_label: "Cancel".to_string(),
+				})
+				.forward(sender.input_sender(), |msg| match msg {
+					ConfirmDialogResponse::Confirm => Message::DeleteClipsConfirm,
+					_ => Message::Void,
+				}),
+			input_dialog: InputDialog::builder()
+				.launch(InputDialogSettings {
+					window: root.clone(),
+					title: "Rename clip".to_string(),
+					cancel_label: "Cancel".to_string(),
+				})
+				.forward(sender.input_sender(), |msg| match msg {
+					InputDialogResponse::Confirm(s) => Message::RenameClipConfirm(s),
+					_ => Message::Void,
+				}),
 			visible: true,
 			tray: match Tray::new(sender.input_sender().clone()).spawn().await {
 				Ok(o) => o,
@@ -390,6 +491,10 @@ impl AsyncComponent for App {
 			window_manager,
 			shortcuts,
 			settings,
+			clips_store: clips_store.clone(),
+			clips_selection: clips_selection.clone(),
+			deleting_clips: Vec::new(),
+			renaming_clip: 0,
 		};
 
 		let games_box = app.games.widget();
@@ -421,9 +526,231 @@ impl AsyncComponent for App {
 			self.error_dialog.show(format!("{e:#}"));
 		}
 	}
+
+	#[tracing::instrument(skip(self, sender))]
+	async fn update_cmd(&mut self, msg: Self::Input, sender: AsyncComponentSender<Self>, _window: &adw::ApplicationWindow) {
+		if let Err(e) = self.update(msg, sender).await {
+			error!(?e);
+			self.error_dialog.show(format!("{e:#}"));
+		}
+	}
 }
 
 impl App {
+	fn setup_clips_factory(sender: relm4::Sender<Message>) -> (gio::ListStore, gtk::SignalListItemFactory, gtk::MultiSelection) {
+		let clips_store = gio::ListStore::new::<ClipObject>();
+		let factory = gtk::SignalListItemFactory::new();
+		let clips_selection = gtk::MultiSelection::new(Some(clips_store.clone()));
+
+		factory.connect_setup({
+			let clips_selection = clips_selection.clone();
+			move |_, item| {
+				let item = item.downcast_ref::<gtk::ListItem>().unwrap();
+
+				let card = gtk::Box::builder()
+					.orientation(gtk::Orientation::Vertical)
+					.spacing(0)
+					.build();
+				card.add_css_class("card");
+
+				let stack = gtk::Stack::new();
+
+				let spinner = gtk::Spinner::builder()
+					.spinning(true)
+					.halign(gtk::Align::Center)
+					.valign(gtk::Align::Center)
+					.height_request(120)
+					.build();
+
+				let thumb = gtk::Picture::builder()
+					.height_request(120)
+					.content_fit(gtk::ContentFit::Cover)
+					.build();
+
+				stack.add_named(&spinner, Some("loading"));
+				stack.add_named(&thumb, Some("thumb"));
+				stack.set_visible_child_name("loading");
+
+				let title = gtk::Label::builder()
+					.halign(gtk::Align::Start)
+					.ellipsize(gtk::pango::EllipsizeMode::End)
+					.margin_start(8)
+					.margin_end(8)
+					.margin_top(6)
+					.build();
+				title.add_css_class("caption");
+
+				let meta = gtk::Label::builder()
+					.halign(gtk::Align::Start)
+					.margin_start(8)
+					.margin_end(8)
+					.margin_bottom(8)
+					.build();
+				meta.add_css_class("caption");
+				meta.add_css_class("dim-label");
+
+				card.append(&stack);
+				card.append(&title);
+				card.append(&meta);
+
+				let menu_model = gio::Menu::new();
+				menu_model.append(Some("Open"), Some("clip.open"));
+				menu_model.append(Some("Rename"), Some("clip.rename"));
+				menu_model.append(Some("Show in Files"), Some("clip.open-folder"));
+
+				let danger_section = gio::Menu::new();
+				danger_section.append(Some("Delete"), Some("clip.delete"));
+				menu_model.append_section(None, &danger_section);
+
+				let popover = gtk::PopoverMenu::from_model(Some(&menu_model));
+				popover.set_parent(&card);
+				popover.set_has_arrow(false);
+
+				let gesture = gtk::GestureClick::new();
+				gesture.set_button(3);
+				gesture.connect_pressed({
+					let clips_selection = clips_selection.clone();
+					let popover = popover.clone();
+					move |gesture, _, x, y| {
+						clips_selection.unselect_all();
+						gesture.set_state(gtk::EventSequenceState::Claimed);
+						popover.set_halign(gtk::Align::Start);
+						popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 0, 0)));
+						popover.popup();
+					}
+				});
+				card.add_controller(gesture);
+
+				item.set_child(Some(&card));
+			}
+		});
+
+		factory.connect_bind({
+			// let clips_selection = clips_selection.clone();
+			move |_, item| {
+				let item = item.downcast_ref::<gtk::ListItem>().unwrap();
+				let clip_obj = item.item().unwrap().downcast::<ClipObject>().unwrap();
+				let clip = clip_obj.clip();
+
+				let card = item.child().unwrap().downcast::<gtk::Box>().unwrap();
+				let children = card.observe_children();
+
+				let stack = children.item(0).unwrap().downcast::<gtk::Stack>().unwrap();
+				let title = children.item(1).unwrap().downcast::<gtk::Label>().unwrap();
+				let meta = children.item(2).unwrap().downcast::<gtk::Label>().unwrap();
+
+				title.set_label(&clip.title);
+				meta.set_label("Unknown game"); // TODO: game resolving
+
+				let path = std::path::PathBuf::from(&clip.path_display);
+				relm4::spawn_local(async move {
+					let thumb_path = tokio::task::spawn_blocking(move || crate::thumbnail::extract(&path))
+						.await
+						.ok()
+						.and_then(|r| r.ok());
+
+					if let Some(thumb_path) = thumb_path {
+						let thumb = stack
+							.child_by_name("thumb")
+							.unwrap()
+							.downcast::<gtk::Picture>()
+							.unwrap();
+						thumb.set_filename(Some(&thumb_path));
+						stack.set_visible_child_name("thumb");
+					} else {
+						let spinner = stack
+							.child_by_name("loading")
+							.unwrap()
+							.downcast::<gtk::Spinner>()
+							.unwrap();
+						spinner.set_spinning(false);
+					}
+				});
+
+				let action_group = gio::SimpleActionGroup::new();
+
+				let rename = gio::SimpleAction::new("rename", None);
+				rename.connect_activate({
+					let sender = sender.clone();
+					let clip = clip.clone();
+					move |_, _| sender.emit(Message::RenameClip(clip.id))
+				});
+
+				let delete = gio::SimpleAction::new("delete", None);
+				delete.connect_activate({
+					let sender = sender.clone();
+					let id = clip.id;
+					// let clips_selection = clips_selection.clone();
+					move |_, _| {
+						sender.emit(Message::DeleteClips(vec![id]));
+						// let mut selected: Vec<ObjectId> = (0..clips_selection.n_items())
+						// 	.filter(|&x| clips_selection.is_selected(x))
+						// 	.map(|x| {
+						// 		clips_selection
+						// 			.item(x)
+						// 			.unwrap()
+						// 			.downcast::<ClipObject>()
+						// 			.unwrap()
+						// 			.clip()
+						// 			.id
+						// 	})
+						// 	.collect();
+
+						// if selected.is_empty() {
+						// 	sender.emit(Message::DeleteClips(vec![clip.id]));
+						// } else {
+						// 	if !selected.contains(&clip.id) {
+						// 		selected.push(clip.id);
+						// 	}
+
+						// 	sender.emit(Message::DeleteClips(selected));
+						// }
+					}
+				});
+
+				let open_folder = gio::SimpleAction::new("open-folder", None);
+				open_folder.connect_activate({
+					let sender = sender.clone();
+					let clip = clip.clone();
+					move |_, _| sender.emit(Message::OpenClipFolder(clip.id))
+				});
+
+				let open = gio::SimpleAction::new("open", None);
+				open.connect_activate({
+					let sender = sender.clone();
+					let clip = clip.clone();
+					move |_, _| sender.emit(Message::OpenClip(clip.id))
+				});
+
+				action_group.add_action(&rename);
+				action_group.add_action(&delete);
+				action_group.add_action(&open_folder);
+				action_group.add_action(&open);
+				card.insert_action_group("clip", Some(&action_group));
+			}
+		});
+
+		factory.connect_unbind(|_, item| {
+			let item = item.downcast_ref::<gtk::ListItem>().unwrap();
+			let card = item.child().unwrap().downcast::<gtk::Box>().unwrap();
+			let stack = card
+				.observe_children()
+				.item(0)
+				.unwrap()
+				.downcast::<gtk::Stack>()
+				.unwrap();
+			stack.set_visible_child_name("loading");
+			let spinner = stack
+				.child_by_name("loading")
+				.unwrap()
+				.downcast::<gtk::Spinner>()
+				.unwrap();
+			spinner.set_spinning(true);
+		});
+
+		return (clips_store, factory, clips_selection);
+	}
+
 	fn load_displays(&self, widget: &mut adw::ComboRow) -> Result<()> {
 		info!("loading displays");
 		let displays = gtk::StringList::new(&[]);
@@ -446,6 +773,107 @@ impl App {
 		let tx = sender.input_sender();
 		match msg {
 			Message::Void => {}
+			Message::OpenClipFolder(id) => {
+				let clip = self.db.get_clip(id)?;
+				let path = std::path::PathBuf::from(&clip.path_display);
+				let file = File::open(path).context("could not open file")?;
+
+				let tx = tx.clone();
+				let window = self.window.clone();
+				relm4::spawn_local(async move {
+					if let Err(e) = portals::open_uri::open_directory(&window, file).await {
+						error!(?e);
+						tx.emit(Message::Error(format!("{e:#}")));
+					}
+				});
+			}
+			Message::OpenClip(id) => {
+				let clip = self.db.get_clip(id)?;
+				let path = std::path::PathBuf::from(&clip.path_display);
+				let file = gio::File::for_path(&path);
+				let app = gio::AppInfo::default_for_type("video/mp4", false).context("no default app for video/mp4")?;
+				app.launch(&[file], gio::AppLaunchContext::NONE)
+					.context("could not open clip")?;
+			}
+			Message::DelPressed => {
+				let ids: Vec<ObjectId> = (0..self.clips_selection.n_items())
+					.filter_map(|i| {
+						if self.clips_selection.is_selected(i) {
+							Some(
+								self.clips_selection
+									.item(i)
+									.unwrap()
+									.downcast::<ClipObject>()
+									.unwrap()
+									.clip()
+									.id,
+							)
+						} else {
+							None
+						}
+					})
+					.collect();
+
+				if !ids.is_empty() {
+					tx.emit(Message::DeleteClips(ids));
+				}
+			}
+			Message::DeleteClips(clips) => {
+				self.deleting_clips = clips;
+				self.confirm_dialog.emit(ConfirmDialogMessage::Show);
+			}
+			Message::DeleteClipsConfirm => {
+				let clips = std::mem::take(&mut self.deleting_clips);
+				let db = self.db.clone();
+				sender.oneshot_command(async move {
+					for id in clips {
+						let clip = match db.get_clip(id) {
+							Ok(o) => o,
+							Err(e) => {
+								error!(?e);
+								return Message::Error(format!("{e:#}"));
+							}
+						};
+
+						if let Err(e) = std::fs::remove_file(clip.path_display).context("could not delete clip file") {
+							error!(?e);
+							return Message::Error(format!("{e:#}"));
+						}
+
+						if let Err(e) = db.delete_clip(id) {
+							error!(?e);
+							return Message::Error(format!("{e:#}"));
+						}
+					}
+					return Message::LoadClips;
+				});
+			}
+			Message::F2Pressed => {
+				let selected: Vec<u32> = (0..self.clips_selection.n_items())
+					.filter(|&i| self.clips_selection.is_selected(i))
+					.collect();
+
+				if selected.len() == 1 {
+					let obj = self
+						.clips_selection
+						.item(selected[0])
+						.unwrap()
+						.downcast::<ClipObject>()
+						.unwrap();
+
+					tx.emit(Message::RenameClip(obj.clip().id));
+				}
+			}
+			Message::RenameClip(clip) => {
+				self.renaming_clip = clip;
+				self.input_dialog
+					.emit(InputDialogMessage::Show(self.db.get_clip(clip)?.title));
+			}
+			Message::RenameClipConfirm(title) => {
+				let id = std::mem::take(&mut self.renaming_clip);
+				self.db.rename_clip(id, title)?;
+				tx.emit(Message::LoadClips);
+			}
 			Message::SetOutputDir(dir) => {
 				self.db
 					.write_settings(move |settings| settings.output_dir = dir.display().to_string())?;
@@ -496,6 +924,14 @@ impl App {
 			Message::Init => {
 				info!("loading games");
 				tx.emit(Message::GamesLoaded(self.db.get_games()?));
+				tx.emit(Message::LoadClips);
+			}
+			Message::LoadClips => {
+				let clips = self.db.get_clips()?;
+				self.clips_store.remove_all();
+				for clip in clips {
+					self.clips_store.append(&ClipObject::new(clip));
+				}
 			}
 			Message::GamesLoaded(games) => {
 				let mut guard = self.games.guard();
@@ -512,16 +948,38 @@ impl App {
 					guard.send(i, i == index.current_index());
 				}
 			}
-			Message::SaveClip => todo!(),
+			Message::SaveClip => self.recorder.clip()?,
 			Message::ToggleClipping => self.recorder.toggle(&self.settings)?,
-			Message::ClipReceived(clip) => {
-				info!("clip recv: {clip}");
+			Message::ClipReceived { path, path_uri } => {
+				info!("clip recv: {path:?}");
 				let window = self
 					.window_manager
 					.get_focused_window()
 					.await
 					.context("could not get current window")?;
 				info!("window: {window:?}");
+
+				if window.fullscreen {
+					todo!();
+				}
+
+				let id = self
+					.db
+					.save_clip(Clip {
+						id: 0,
+						title: path
+							.file_prefix()
+							.context("could not get file prefix")?
+							.to_string_lossy()
+							.to_string(),
+						path_display: path.display().to_string(),
+						path_uri,
+						game: None,
+					})
+					.context("could not save clip")?;
+
+				info!("clip id: {id}");
+				tx.emit(Message::LoadClips);
 			}
 		}
 

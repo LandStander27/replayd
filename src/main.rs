@@ -7,6 +7,7 @@ pub mod listener;
 pub mod log;
 pub mod portals;
 pub mod recorder;
+pub mod thumbnail;
 pub mod window;
 
 pub mod prelude;

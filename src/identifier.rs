@@ -4,8 +4,9 @@ mod hypr;
 
 #[derive(Debug)]
 pub struct Window {
-	class: String,
-	title: String,
+	pub class: String,
+	pub title: String,
+	pub fullscreen: bool,
 }
 
 #[async_trait]
@@ -30,7 +31,7 @@ pub fn get_window_manager() -> Result<Box<dyn WindowManager>> {
 		{
 			"Hyprland" => Box::new(hypr::Hyprland),
 			s => {
-				return Err(eyre!("{s} is unknown"));
+				return Err(eyre!("{s} is unknown")); // TODO: add more
 			}
 		},
 	);

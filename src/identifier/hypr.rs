@@ -43,6 +43,10 @@ impl WindowManager for Hyprland {
 				.as_str()
 				.context("no title in window json")?
 				.to_string(),
+			fullscreen: window["fullscreen"]
+				.as_i64()
+				.context("no fullscreen in window json")?
+				== 2,
 		});
 	}
 }

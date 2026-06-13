@@ -102,6 +102,22 @@ impl Recorder {
 		return Ok(());
 	}
 
+	pub fn clip(&self) -> Result<()> {
+		if !self.is_active() {
+			return Ok(());
+		}
+
+		let proc = self
+			.process
+			.as_ref()
+			.context("gpu-screen-recorder not running")?;
+
+		let pid = proc.id().context("gpu-screen-recorder not running")?;
+		nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), nix::sys::signal::SIGUSR1).context("could not send SIGUSR1 to gpu-screen-recorder")?;
+
+		return Ok(());
+	}
+
 	pub fn toggle(&mut self, settings: &Settings) -> Result<()> {
 		if self.process.is_none() {
 			return self.start(settings);
