@@ -77,7 +77,7 @@ impl Recorder {
 				"-sc",
 				&hook_path.display().to_string(),
 				"-o",
-				&settings.output_dir,
+				&settings.output_dir.display().to_string(),
 			])
 			.stdin(Stdio::null())
 			.stdout(Stdio::null())

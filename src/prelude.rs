@@ -13,6 +13,7 @@ pub use portals::open_dialog::OpenFileDialog;
 pub use portals::shortcuts::ShortcutsSession;
 pub use recorder::Recorder;
 pub use relm4::abstractions::Toaster;
+pub use relm4::actions::*;
 pub use relm4::prelude::*;
 pub use std::collections::{BTreeMap, HashMap};
 pub use std::fs::File;

@@ -65,19 +65,7 @@ impl Listener {
 										tx.emit(Message::Error(format!("{e:#}")));
 									}
 								} else {
-									match url::Url::from_file_path(&buf)
-										.ok()
-										.context("could not create file uri")
-									{
-										Ok(o) => tx.emit(Message::ClipReceived {
-											path: PathBuf::from(buf),
-											path_uri: o.to_string(),
-										}),
-										Err(e) => {
-											error!(?e);
-											tx.emit(Message::Error(format!("{e:#}")));
-										}
-									}
+									tx.emit(Message::ClipReceived(PathBuf::from(buf)));
 								}
 							});
 						}

@@ -39,8 +39,20 @@ pub struct Clip {
 	pub id: ObjectId,
 	pub game: Option<ObjectId>,
 	pub title: String,
-	pub path_display: String,
-	pub path_uri: String,
+	pub path: PathBuf,
+}
+
+impl Clip {
+	pub fn uri(&self, library: &Path) -> Result<String> {
+		return url::Url::from_file_path(self.absolute_path(library))
+			.ok()
+			.context("could not convert to file uri path")
+			.map(|x| x.into());
+	}
+
+	pub fn absolute_path(&self, library: &Path) -> PathBuf {
+		return library.join(&self.path);
+	}
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -129,7 +141,7 @@ pub struct Settings {
 	pub display: Option<String>,
 	pub frame_rate: FrameRate,
 	pub quality: Quality,
-	pub output_dir: String,
+	pub output_dir: PathBuf,
 }
 
 impl Default for Settings {
@@ -142,7 +154,11 @@ impl Default for Settings {
 			quality: Quality::default(),
 			frame_rate: FrameRate::default(),
 			display: None,
-			output_dir: format!("{}/Videos/Clips", std::env::var("HOME").unwrap()),
+			output_dir: if cfg!(debug_assertions) {
+				std::env::current_dir().unwrap().join("clips")
+			} else {
+				format!("{}/Videos/Clips", std::env::var("HOME").unwrap()).into()
+			},
 		};
 	}
 }

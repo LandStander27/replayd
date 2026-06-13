@@ -12,6 +12,17 @@ const GAMES_TABLE: TableDefinition<ObjectId, &[u8]> = TableDefinition::new("game
 const SETTINGS_TABLE: TableDefinition<ObjectId, &[u8]> = TableDefinition::new("settings");
 const CURRENT_VERSION: u64 = 1;
 
+pub fn db_path() -> Result<PathBuf> {
+	return Ok(if cfg!(debug_assertions) {
+		std::env::current_dir().unwrap().join("data.redb")
+	} else {
+		dirs::data_dir()
+			.context("could not find XDG_DATA_DIR")?
+			.join("dev.land.Replayd")
+			.join("data.redb")
+	});
+}
+
 #[derive(Clone)]
 pub struct Db {
 	db: Arc<Database>,
@@ -25,14 +36,7 @@ impl Db {
 	}
 
 	pub fn open() -> Result<Self> {
-		let path = if cfg!(debug_assertions) {
-			"./data.redb".into()
-		} else {
-			dirs::data_dir()
-				.context("could not find XDG_DATA_DIR")?
-				.join("dev.land.Replayd")
-				.join("data.redb")
-		};
+		let path = db_path().context("could not get db path")?;
 
 		std::fs::create_dir_all(path.parent().unwrap()).context("could not create directory")?;
 

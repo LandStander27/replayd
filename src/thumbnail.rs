@@ -2,17 +2,29 @@ use gstreamer::prelude::*;
 
 use crate::prelude::*;
 
-pub fn cache_path(clip_path: &Path) -> Result<PathBuf> {
-	let hash = format!("{:x}", md5::compute(clip_path.to_string_lossy().as_bytes()));
-	return Ok(dirs::cache_dir()
-		.context("could not get XDG_CACHE_DIR")?
-		.join("replayd")
-		.join("thumbs")
-		.join(format!("{hash}.jpg")));
+pub fn cache_dir() -> Result<PathBuf> {
+	if cfg!(debug_assertions) {
+		return Ok(std::env::current_dir()?.join("cache"));
+	} else {
+		return Ok(dirs::cache_dir()
+			.context("could not get XDG_CACHE_DIR")?
+			.join("replayd")
+			.join("thumbs"));
+	}
 }
 
-pub fn extract(clip_path: &Path) -> Result<PathBuf> {
-	let dest = cache_path(clip_path)?;
+pub fn cache_path(clip: &Clip) -> Result<PathBuf> {
+	let hash = format!("{:x}", md5::compute(clip.path.to_string_lossy().as_bytes()));
+	return Ok(cache_dir()?.join(format!("{hash}.jpg")));
+}
+
+pub fn clear_cache() -> Result<()> {
+	std::fs::remove_dir_all(cache_dir()?).context("could not delete cache")?;
+	return Ok(());
+}
+
+pub fn extract(clip: &Clip, library: &Path) -> Result<PathBuf> {
+	let dest = cache_path(clip)?;
 	if dest.exists() {
 		return Ok(dest);
 	}
@@ -22,8 +34,8 @@ pub fn extract(clip_path: &Path) -> Result<PathBuf> {
 	gstreamer::init()?;
 
 	let pipeline = format!(
-		"uridecodebin uri=\"file://{}\" ! videoconvert ! videoscale ! video/x-raw,width=320,height=180 ! jpegenc ! filesink location=\"{}\"",
-		clip_path.display(),
+		"uridecodebin uri=\"{}\" ! videoconvert ! videoscale ! video/x-raw,width=320,height=180 ! jpegenc ! filesink location=\"{}\"",
+		clip.uri(library)?,
 		dest.display()
 	);
 
