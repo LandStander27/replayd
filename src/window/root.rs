@@ -1,7 +1,7 @@
 use ksni::TrayMethods;
 
 use super::clip::ClipObject;
-use crate::{prelude::*, thumbnail};
+use crate::prelude::*;
 
 struct App {
 	window: adw::ApplicationWindow,
@@ -18,6 +18,8 @@ struct App {
 	settings: Settings,
 	clips_store: gio::ListStore,
 	clips_selection: gtk::MultiSelection,
+	clips_filter: gtk::CustomFilter,
+	selected_game: Option<ObjectId>,
 	delete_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
 	delete_db_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
 	input_dialog: AsyncController<InputDialog<adw::ApplicationWindow>>,
@@ -595,7 +597,7 @@ impl AsyncComponent for App {
 			None
 		};
 
-		let (clips_store, factory, clips_selection) = App::setup_clips_factory(sender.input_sender().clone(), &settings);
+		let (clips_store, factory, clips_selection, clips_filter) = App::setup_clips_factory(sender.input_sender().clone(), db.clone(), &settings);
 		let app = App {
 			window: root.clone(),
 			error_dialog,
@@ -658,6 +660,8 @@ impl AsyncComponent for App {
 			settings,
 			clips_store: clips_store.clone(),
 			clips_selection: clips_selection.clone(),
+			clips_filter: clips_filter.clone(),
+			selected_game: None,
 			deleting_clips: Vec::new(),
 			renaming_clip: 0,
 			audio_player,
@@ -714,10 +718,16 @@ impl AsyncComponent for App {
 }
 
 impl App {
-	fn setup_clips_factory(sender: relm4::Sender<Message>, settings: &Settings) -> (gio::ListStore, gtk::SignalListItemFactory, gtk::MultiSelection) {
+	fn setup_clips_factory(
+		sender: relm4::Sender<Message>,
+		db: Db,
+		settings: &Settings,
+	) -> (gio::ListStore, gtk::SignalListItemFactory, gtk::MultiSelection, gtk::CustomFilter) {
 		let clips_store = gio::ListStore::new::<ClipObject>();
 		let factory = gtk::SignalListItemFactory::new();
-		let clips_selection = gtk::MultiSelection::new(Some(clips_store.clone()));
+		let clips_filter = gtk::CustomFilter::new(|_| true);
+		let filter_model = gtk::FilterListModel::new(Some(clips_store.clone()), Some(clips_filter.clone()));
+		let clips_selection = gtk::MultiSelection::new(Some(filter_model));
 
 		factory.connect_setup({
 			let clips_selection = clips_selection.clone();
@@ -818,7 +828,14 @@ impl App {
 				let meta = children.item(2).unwrap().downcast::<gtk::Label>().unwrap();
 
 				title.set_label(&clip.title);
-				meta.set_label("Unknown game"); // TODO: game resolving
+				let game = if let Some(game) = clip.game
+					&& let Ok(game) = db.get_game(game)
+				{
+					identifier::identify_game(&game.window_class).unwrap_or(game.window_class)
+				} else {
+					"Unknown game".to_string()
+				};
+				meta.set_label(&game); // TODO: game resolving
 
 				relm4::spawn_local({
 					let clip = clip.clone();
@@ -887,7 +904,7 @@ impl App {
 			spinner.set_spinning(true);
 		});
 
-		return (clips_store, factory, clips_selection);
+		return (clips_store, factory, clips_selection, clips_filter);
 	}
 
 	fn load_displays(&self, widget: &mut adw::ComboRow) -> Result<()> {
@@ -1086,6 +1103,14 @@ impl App {
 			}
 			Message::Init => {
 				info!("loading games");
+				if let Err(e) = identifier::get_games()
+					.await
+					.context("could not get mapped games")
+				{
+					error!(?e);
+					tx.emit(Message::Error(format!("{e:#}")));
+				}
+
 				tx.emit(Message::GamesLoaded(self.db.get_games()?));
 				info!("loading clips");
 				tx.emit(Message::LoadClips);
@@ -1096,13 +1121,15 @@ impl App {
 				for clip in clips {
 					self.clips_store.append(&ClipObject::new(clip));
 				}
+
+				self.clips_filter.changed(gtk::FilterChange::Different);
 			}
 			Message::GamesLoaded(games) => {
 				let mut guard = self.games.guard();
 				guard.clear();
-				guard.push_back("All games".to_string());
+				guard.push_back((0, "All games".to_string()));
 				for game in games {
-					guard.push_back(game.window_class);
+					guard.push_back((game.id, identifier::identify_game(&game.window_class).unwrap_or(game.window_class)));
 				}
 				guard.send(0, true);
 			}
@@ -1111,6 +1138,21 @@ impl App {
 				for i in 0..guard.len() {
 					guard.send(i, i == index.current_index());
 				}
+
+				self.selected_game = if index.current_index() == 0 {
+					None
+				} else {
+					guard.get(index.current_index()).map(|chip| chip.game_id)
+				};
+
+				let selected_game = self.selected_game;
+				self.clips_filter.set_filter_func(move |obj| {
+					let clip = obj.downcast_ref::<ClipObject>().unwrap().clip();
+					match selected_game {
+						None => true,
+						Some(game) => clip.game.map(|id| game == id).unwrap_or(false),
+					}
+				});
 			}
 			Message::SaveClip => self.recorder.clip()?,
 			Message::ToggleClipping => {
@@ -1164,9 +1206,19 @@ impl App {
 					.context("invalid clip recv")?
 					.to_path_buf();
 
-				if window.fullscreen {
-					todo!();
-				}
+				let game_id = if window.fullscreen {
+					let games = self.db.get_games()?;
+					if let Some(game) = games.iter().find(|x| x.window_class == window.class) {
+						Some(game.id)
+					} else {
+						Some(self.db.add_game(Game {
+							id: 0,
+							window_class: window.class,
+						})?)
+					}
+				} else {
+					None
+				};
 
 				let id = self
 					.db
@@ -1178,7 +1230,7 @@ impl App {
 							.to_string_lossy()
 							.to_string(),
 						path: relative_path,
-						game: None,
+						game: game_id,
 					})
 					.context("could not save clip")?;
 
@@ -1194,12 +1246,13 @@ impl App {
 #[derive(Debug)]
 struct GameChip {
 	name: String,
+	game_id: ObjectId,
 	selected: bool,
 }
 
 #[relm4::factory]
 impl FactoryComponent for GameChip {
-	type Init = String;
+	type Init = (ObjectId, String);
 	type Input = bool;
 	type Output = Message;
 	type CommandOutput = ();
@@ -1221,8 +1274,8 @@ impl FactoryComponent for GameChip {
 		}
 	}
 
-	fn init_model(name: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
-		return Self { name, selected: false };
+	fn init_model((game_id, name): Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
+		return Self { name, game_id, selected: false };
 	}
 
 	fn update(&mut self, selected: Self::Input, _sender: FactorySender<Self>) {

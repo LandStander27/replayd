@@ -64,6 +64,32 @@ impl Db {
 		});
 	}
 
+	pub fn add_game(&self, mut game: Game) -> Result<ObjectId> {
+		return self.write(|writer| {
+			let mut table = writer.open_table(GAMES_TABLE)?;
+			let len = table.len().context("could not get game amount")?;
+			game.id = len;
+			let json = game.encode()?;
+			table
+				.insert(len, json.as_slice())
+				.context("could not write game to database")?;
+
+			return Ok(len);
+		});
+	}
+
+	pub fn get_game(&self, id: ObjectId) -> Result<Game> {
+		let reader = self.reader()?;
+		let table = reader.open_table(GAMES_TABLE)?;
+		let json = table
+			.get(id)
+			.context("could not read games table")?
+			.context("clip does not exist")?;
+
+		let game = Game::decode(json.value())?;
+		return Ok(game);
+	}
+
 	pub fn get_games(&self) -> Result<Vec<Game>> {
 		let reader = self.reader()?;
 		let table = reader.open_table(GAMES_TABLE)?;

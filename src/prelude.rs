@@ -1,4 +1,4 @@
-pub use crate::{args, audio, db, identifier, listener, log, portals, recorder, window};
+pub use crate::{args, audio, db, identifier, listener, log, portals, recorder, thumbnail, window};
 pub use adw::prelude::*;
 pub use async_trait::async_trait;
 pub use audio::AudioPlayer;
