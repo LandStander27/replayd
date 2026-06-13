@@ -1,6 +1,7 @@
 #![allow(clippy::needless_return)]
 
 pub mod args;
+pub mod audio;
 pub mod db;
 pub mod identifier;
 pub mod listener;

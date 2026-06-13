@@ -143,6 +143,8 @@ pub struct Settings {
 	pub quality: Quality,
 	pub output_dir: PathBuf,
 	pub show_end_title_buttons: bool,
+	pub notifications: bool,
+	pub sound_feedback: bool,
 }
 
 impl Default for Settings {
@@ -161,6 +163,8 @@ impl Default for Settings {
 				format!("{}/Videos/Clips", std::env::var("HOME").unwrap()).into()
 			},
 			show_end_title_buttons: true,
+			notifications: false,
+			sound_feedback: true,
 		};
 	}
 }

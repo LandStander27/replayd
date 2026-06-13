@@ -11,6 +11,10 @@ path = "src/bin/hook.rs"
 [dependencies]
 version = { path = "version" }
 
+rodio = { version = "0.22.2", default-features = false, features = [
+	"playback",
+	"mp3",
+] }
 clap = { version = "4.6.1", features = ["derive"] }
 color-eyre = "0.6.5"
 tokio = { version = "1.52.3", features = [
@@ -33,11 +37,16 @@ dirs = "6.0.0"
 serde_json = "1.0.150"
 display-info = "0.5.9"
 async-trait = "0.1.89"
-ashpd = { version = "0.13.11", features = ["tracing", "gtk4_wayland", "global_shortcuts", "file_chooser", "open_uri"] }
+ashpd = { version = "0.13.11", features = [
+	"tracing",
+	"gtk4_wayland",
+	"global_shortcuts",
+	"file_chooser",
+	"open_uri",
+] }
 futures = "0.3.32"
 nix = { version = "0.31.3", features = ["signal"] }
 strum = { version = "0.28.0", features = ["derive"] }
 url = "2.5.8"
 gstreamer = "0.25.2"
-gstreamer-video = "0.25.2"
 md5 = "0.8.0"

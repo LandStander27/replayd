@@ -23,6 +23,7 @@ struct App {
 	input_dialog: AsyncController<InputDialog<adw::ApplicationWindow>>,
 	deleting_clips: Vec<ObjectId>,
 	renaming_clip: ObjectId,
+	audio_player: Option<AudioPlayer>,
 }
 
 #[derive(Debug)]
@@ -407,6 +408,57 @@ impl AsyncComponent for App {
 									sender.input(Message::LoadSettings);
 								}
 							},
+						},
+						adw::SwitchRow {
+							set_title: "Send notifications on events",
+
+							#[watch]
+							set_active: app.settings.notifications,
+
+							connect_active_notify[sender, db] => move |x| {
+								let value = x.is_active();
+								if let Err(e) = db.write_settings(|s| s.notifications = value) {
+									error!(?e);
+									sender.input(Message::Error(format!("{e:#}")));
+								} else {
+									sender.input(Message::LoadSettings);
+								}
+							},
+						},
+						adw::SwitchRow {
+							set_title: "Make a sound feedback whenever you save a clip",
+
+							#[watch]
+							set_active: app.settings.sound_feedback,
+
+							connect_active_notify[sender, db] => move |x| {
+								let value = x.is_active();
+								if let Err(e) = db.write_settings(|s| s.sound_feedback = value) {
+									error!(?e);
+									sender.input(Message::Error(format!("{e:#}")));
+								} else {
+									sender.input(Message::LoadSettings);
+								}
+							},
+						}
+					},
+					adw::PreferencesGroup {
+						set_title: "Miscellaneous",
+						adw::ActionRow {
+							set_title: "Reset settings to default",
+							add_suffix = &gtk::Button {
+								set_label: "Reset",
+								set_valign: gtk::Align::Center,
+								add_css_class: "flat",
+								connect_clicked[sender, db] => move |_| {
+									if let Err(e) = db.write_settings(|s| *s = Settings::default()) {
+										error!(?e);
+										sender.input(Message::Error(format!("{e:#}")));
+									} else {
+										sender.input(Message::LoadSettings);
+									}
+								}
+							},
 						}
 					}
 				}
@@ -530,6 +582,19 @@ impl AsyncComponent for App {
 			}
 		};
 
+		let audio_player = if settings.sound_feedback {
+			match AudioPlayer::new(include_bytes!("../../assets/clip.mp3")) {
+				Ok(o) => Some(o),
+				Err(e) => {
+					error!(?e);
+					error_dialog.show(format!("{e:#}"));
+					None
+				}
+			}
+		} else {
+			None
+		};
+
 		let (clips_store, factory, clips_selection) = App::setup_clips_factory(sender.input_sender().clone(), &settings);
 		let app = App {
 			window: root.clone(),
@@ -595,6 +660,7 @@ impl AsyncComponent for App {
 			clips_selection: clips_selection.clone(),
 			deleting_clips: Vec::new(),
 			renaming_clip: 0,
+			audio_player,
 		};
 
 		let games_box = app.games.widget();
@@ -1047,8 +1113,44 @@ impl App {
 				}
 			}
 			Message::SaveClip => self.recorder.clip()?,
-			Message::ToggleClipping => self.recorder.toggle(&self.settings)?,
+			Message::ToggleClipping => {
+				self.recorder.toggle(&self.settings)?;
+
+				if self.settings.notifications {
+					relm4::view! {
+						#[name(noti)]
+						gio::Notification::new("Replayd") {
+							set_body: Some(if self.recorder.is_active() { "Clipping enabled." } else { "Clipping disabled." })
+						}
+					}
+
+					self.window
+						.application()
+						.unwrap()
+						.send_notification(Some("dev.landsj.Replayd"), &noti);
+				}
+			}
 			Message::ClipReceived(path) => {
+				if let Some(audio_player) = &self.audio_player
+					&& self.settings.sound_feedback
+				{
+					audio_player.play().context("could not play audio")?;
+				}
+
+				if self.settings.notifications {
+					relm4::view! {
+						#[name(noti)]
+						gio::Notification::new("Replayd") {
+							set_body: Some("Clip saved!")
+						}
+					}
+
+					self.window
+						.application()
+						.unwrap()
+						.send_notification(Some("dev.landsj.Replayd"), &noti);
+				}
+
 				info!("clip recv: {path:?}");
 				let window = self
 					.window_manager
