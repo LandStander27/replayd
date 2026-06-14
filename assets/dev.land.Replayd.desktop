@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Replayd
+Comment=Capture your favorite moments!
+Type=Application
+Exec=replayd
+Terminal=false
+Categories=AudioVideo;Recorder;
+Keywords=Clipper;Game;
+Icon=dev.land.Replayd
+StartupNotify=true
