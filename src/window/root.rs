@@ -607,7 +607,11 @@ impl AsyncComponent for App {
 		};
 		info!("db init");
 
-		let listener = match Listener::bind(sender.input_sender().clone(), db.clone()) {
+		let listener = match Listener::bind(
+			sender.input_sender().clone(),
+			#[cfg(feature = "socket_commands")]
+			db.clone(),
+		) {
 			Ok(o) => Some(o),
 			Err(e) => {
 				error!(?e);

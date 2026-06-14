@@ -1,0 +1,37 @@
+name: Build
+
+on:
+  push:
+    branches: ["master"]
+    paths:
+      - "**"
+      - "!README.md"
+      - "!.gitignore"
+      - "!LICENSE"
+      - "!assets/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: docker
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install deps
+        run: pacman -Sy --noconfirm --needed git nodejs rust cairo gtk4 alsa-lib
+          libadwaita glib2 glibc rust sed libgit2 pkgconf
+
+      - uses: actions/checkout@v4
+      - name: Build replayd and replayd-hook
+        run: cargo b --release --all-features
+
+      - name: Run tests
+        run: cargo test --all-features
+
+      - name: Upload artifact
+        uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: replayd
+          path: |
+            target/release/replayd
+            target/release/replayd-hook

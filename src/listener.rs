@@ -1,5 +1,3 @@
-use std::fmt::Write;
-
 use crate::prelude::*;
 
 pub struct Listener {
@@ -8,7 +6,7 @@ pub struct Listener {
 }
 
 impl Listener {
-	pub fn bind(tx: relm4::Sender<Message>, db: Db) -> Result<Self> {
+	pub fn bind(tx: relm4::Sender<Message>, #[cfg(feature = "socket_commands")] db: Db) -> Result<Self> {
 		let socket_path = dirs::runtime_dir()
 			.context("could not find XDG_RUNTIME_DIR")?
 			.join("replayd")
@@ -38,6 +36,8 @@ impl Listener {
 					}
 
 					let tx = tx.clone();
+
+					#[cfg(feature = "socket_commands")]
 					let db = db.clone();
 					match accept {
 						Err(e) => {
@@ -57,8 +57,9 @@ impl Listener {
 									tx.emit(Message::Error(format!("{e:#}")));
 								}
 
-								#[cfg(debug_assertions)]
+								#[cfg(feature = "socket_commands")]
 								if buf.trim() == "/db" {
+									use std::fmt::Write;
 									let mut s = String::new();
 									writeln!(
 										&mut s,

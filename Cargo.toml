@@ -1,12 +1,16 @@
 [package]
 name = "replayd"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 default-run = "replayd"
 
 [[bin]]
 name = "replayd-hook"
 path = "src/bin/hook.rs"
+
+[features]
+default = []
+socket_commands = []
 
 [dependencies]
 version = { path = "version" }
