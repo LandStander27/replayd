@@ -1,4 +1,4 @@
-use redb::{Database, ReadTransaction, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition, WriteTransaction, backends::InMemoryBackend};
+use redb::{Database, ReadTransaction, ReadableDatabase, ReadableTable, TableDefinition, WriteTransaction, backends::InMemoryBackend};
 
 use crate::prelude::*;
 
@@ -67,14 +67,18 @@ impl Db {
 	pub fn add_game(&self, mut game: Game) -> Result<ObjectId> {
 		return self.write(|writer| {
 			let mut table = writer.open_table(GAMES_TABLE)?;
-			let len = table.len().context("could not get game amount")?;
-			game.id = len;
+			let id = table
+				.last()
+				.context("could not get last game")?
+				.map(|(x, _)| x.value() + 1)
+				.unwrap_or_default();
+			game.id = id;
 			let json = game.encode()?;
 			table
-				.insert(len, json.as_slice())
+				.insert(id, json.as_slice())
 				.context("could not write game to database")?;
 
-			return Ok(len);
+			return Ok(id);
 		});
 	}
 
@@ -164,13 +168,17 @@ impl Db {
 	pub fn save_clip(&self, mut clip: Clip) -> Result<u64> {
 		return self.write(|writer| {
 			let mut table = writer.open_table(CLIPS_TABLE)?;
-			let len = table.len().context("could not get clip amount")?;
-			clip.id = len;
+			let id = table
+				.last()
+				.context("could not get last clip")?
+				.map(|(x, _)| x.value() + 1)
+				.unwrap_or_default();
+			clip.id = id;
 			let json = clip.encode()?;
 			table
-				.insert(len, json.as_slice())
+				.insert(id, json.as_slice())
 				.context("could not write clip to database")?;
-			return Ok(len);
+			return Ok(id);
 		});
 	}
 

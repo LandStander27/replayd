@@ -58,7 +58,7 @@ impl Clip {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Game {
 	pub id: ObjectId,
-	pub window_class: String,
+	pub window: Window,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, Display)]

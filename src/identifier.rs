@@ -1,11 +1,18 @@
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
 use crate::prelude::*;
 
 mod hypr;
 
-static IDENTIFIABLE_GAMES: OnceCell<HashMap<String, String>> = OnceCell::const_new();
+static IDENTIFIABLE_GAMES: OnceCell<Vec<IdentifiableGame>> = OnceCell::const_new();
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IdentifiableGame {
+	pub class: String,
+	pub title_substring: String,
+	pub name: String,
+}
 
 pub async fn get_games() -> Result<()> {
 	let client = reqwest::Client::builder()
@@ -13,15 +20,18 @@ pub async fn get_games() -> Result<()> {
 		.build()
 		.context("could not build client")?;
 	let response = client
-		.get("https://cdn.landsj.dev/games.json")
+		.get("https://cdn.landsj.dev/games.jsonc")
 		.send()
 		.await
 		.context("could not send request")?;
-	let json = response
+	let json: String = response
 		.text()
 		.await
-		.context("could not get text from request")?;
-	let parsed: HashMap<String, String> = serde_json::from_str(&json).context("could not parse json from request")?;
+		.context("could not get text from request")?
+		.lines()
+		.filter(|x| !x.starts_with("//"))
+		.collect();
+	let parsed: Vec<IdentifiableGame> = serde_json::from_str(&json).context("could not parse json from request")?;
 
 	IDENTIFIABLE_GAMES
 		.set(parsed)
@@ -30,17 +40,20 @@ pub async fn get_games() -> Result<()> {
 	return Ok(());
 }
 
-pub fn identify_game(class: impl AsRef<str>) -> Option<String> {
+pub fn identify_game(window: &Window) -> Option<IdentifiableGame> {
 	let games = if IDENTIFIABLE_GAMES.initialized() {
 		IDENTIFIABLE_GAMES.get().unwrap()
 	} else {
 		&Default::default()
 	};
 
-	return games.get(class.as_ref()).cloned();
+	return games
+		.iter()
+		.find(|x| x.class == window.class && window.title.contains(&x.title_substring))
+		.cloned();
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Window {
 	pub class: String,
 	pub title: String,

@@ -3,6 +3,16 @@ use ksni::TrayMethods;
 use super::clip::ClipObject;
 use crate::prelude::*;
 
+#[derive(Debug, Clone)]
+struct ClipsData {
+	store: gio::ListStore,
+	factory: gtk::SignalListItemFactory,
+	selection: gtk::MultiSelection,
+	filter: gtk::CustomFilter,
+	sorter: gtk::CustomSorter,
+	scores: Arc<RwLock<HashMap<ObjectId, u32>>>,
+}
+
 struct App {
 	window: adw::ApplicationWindow,
 	error_dialog: ErrorDialog<adw::ApplicationWindow>,
@@ -16,9 +26,9 @@ struct App {
 	socket_listener: Option<Listener>,
 	shortcuts: Option<ShortcutsSession>,
 	settings: Settings,
-	clips_store: gio::ListStore,
-	clips_selection: gtk::MultiSelection,
-	clips_filter: gtk::CustomFilter,
+	clips_data: ClipsData,
+	sort_order: SortOrder,
+	user_overrode_sort: bool,
 	selected_game: Option<ObjectId>,
 	delete_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
 	delete_db_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
@@ -26,6 +36,14 @@ struct App {
 	deleting_clips: Vec<ObjectId>,
 	renaming_clip: ObjectId,
 	audio_player: Option<AudioPlayer>,
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, strum::FromRepr)]
+pub enum SortOrder {
+	Relevance,
+	#[default]
+	NewestFirst,
+	OldestFirst,
 }
 
 #[derive(Debug)]
@@ -39,8 +57,10 @@ pub enum Message {
 	Init,
 	Error(String),
 	LoadClips,
+	Search(String),
 	GamesLoaded(Vec<db::Game>),
 	GameSelected(DynamicIndex),
+	GameDeselected,
 	ClipReceived(PathBuf),
 	SaveClip,
 	ToggleClipping,
@@ -57,6 +77,7 @@ pub enum Message {
 	OpenClip(ObjectId),
 	F2Pressed,
 	DelPressed,
+	SetSortOrder(SortOrder, bool),
 }
 
 relm4::new_action_group!(ClipActionGroup, "clip");
@@ -89,10 +110,33 @@ impl AsyncComponent for App {
 					set_margin_start: 12,
 					set_margin_end: 12,
 
-					gtk::SearchEntry {
-						set_placeholder_text: Some("Search clips..."),
-						add_css_class: "pill",
+					gtk::Box {
+						set_orientation: gtk::Orientation::Horizontal,
+						set_spacing: 8,
+
+						gtk::SearchEntry {
+							set_hexpand: true,
+							set_placeholder_text: Some("Search clips..."),
+							add_css_class: "pill",
+
+							connect_search_changed[sender] => move |entry| sender.input(Message::Search(entry.text().to_string()))
+						},
+
+						gtk::DropDown {
+							set_model: Some(&gtk::StringList::new(&["Relevance", "Newest first", "Oldest first"])),
+
+							#[watch]
+							#[block_signal(sort_handler)]
+							set_selected: app.sort_order as u32,
+
+							set_valign: gtk::Align::Center,
+
+							connect_selected_notify[sender] => move |dd| {
+								sender.input(Message::SetSortOrder(SortOrder::from_repr(dd.selected() as usize).unwrap(), true));
+							} @sort_handler
+						},
 					},
+
 				},
 
 				gtk::ScrolledWindow {
@@ -189,14 +233,14 @@ impl AsyncComponent for App {
 					set_margin_bottom: 12,
 
 					gtk::GridView {
-						set_model: Some(&clips_selection),
-						set_factory: Some(&factory),
+						set_model: Some(&clips_data.selection),
+						set_factory: Some(&clips_data.factory),
 						set_max_columns: 6,
 						set_min_columns: 1,
 						set_single_click_activate: false,
 
-						connect_activate[sender, clips_store] => move |_, pos| {
-							let obj = clips_store
+						connect_activate[sender, selection = clips_data.selection] => move |_, pos| {
+							let obj = selection
 								.item(pos)
 								.unwrap()
 								.downcast::<ClipObject>()
@@ -597,7 +641,7 @@ impl AsyncComponent for App {
 			None
 		};
 
-		let (clips_store, factory, clips_selection, clips_filter) = App::setup_clips_factory(sender.input_sender().clone(), db.clone(), &settings);
+		let clips_data = App::setup_clips_factory(sender.input_sender().clone(), db.clone(), &settings);
 		let app = App {
 			window: root.clone(),
 			error_dialog,
@@ -658,9 +702,13 @@ impl AsyncComponent for App {
 			window_manager,
 			shortcuts,
 			settings,
-			clips_store: clips_store.clone(),
-			clips_selection: clips_selection.clone(),
-			clips_filter: clips_filter.clone(),
+			clips_data: clips_data.clone(),
+			// clips_store: clips_store.clone(),
+			// clips_selection: clips_selection.clone(),
+			// clips_filter: clips_filter.clone(),
+			// clips_sorter: clips_sorter.clone(),
+			sort_order: SortOrder::default(),
+			user_overrode_sort: false,
 			selected_game: None,
 			deleting_clips: Vec::new(),
 			renaming_clip: 0,
@@ -717,17 +765,21 @@ impl AsyncComponent for App {
 	}
 }
 
+fn newest_sort_first(a: &glib::Object, b: &glib::Object) -> gtk::Ordering {
+	let a = a.downcast_ref::<ClipObject>().unwrap().clip();
+	let b = b.downcast_ref::<ClipObject>().unwrap().clip();
+	return b.id.cmp(&a.id).into();
+}
+
 impl App {
-	fn setup_clips_factory(
-		sender: relm4::Sender<Message>,
-		db: Db,
-		settings: &Settings,
-	) -> (gio::ListStore, gtk::SignalListItemFactory, gtk::MultiSelection, gtk::CustomFilter) {
+	fn setup_clips_factory(sender: relm4::Sender<Message>, db: Db, settings: &Settings) -> ClipsData {
 		let clips_store = gio::ListStore::new::<ClipObject>();
 		let factory = gtk::SignalListItemFactory::new();
 		let clips_filter = gtk::CustomFilter::new(|_| true);
 		let filter_model = gtk::FilterListModel::new(Some(clips_store.clone()), Some(clips_filter.clone()));
-		let clips_selection = gtk::MultiSelection::new(Some(filter_model));
+		let clips_sorter = gtk::CustomSorter::new(newest_sort_first);
+		let sort_model = gtk::SortListModel::new(Some(filter_model), Some(clips_sorter.clone()));
+		let clips_selection = gtk::MultiSelection::new(Some(sort_model));
 
 		factory.connect_setup({
 			let clips_selection = clips_selection.clone();
@@ -831,11 +883,13 @@ impl App {
 				let game = if let Some(game) = clip.game
 					&& let Ok(game) = db.get_game(game)
 				{
-					identifier::identify_game(&game.window_class).unwrap_or(game.window_class)
+					identifier::identify_game(&game.window)
+						.map(|x| x.name)
+						.unwrap_or(game.window.class)
 				} else {
-					"Unknown game".to_string()
+					"".to_string()
 				};
-				meta.set_label(&game); // TODO: game resolving
+				meta.set_label(&game);
 
 				relm4::spawn_local({
 					let clip = clip.clone();
@@ -904,7 +958,14 @@ impl App {
 			spinner.set_spinning(true);
 		});
 
-		return (clips_store, factory, clips_selection, clips_filter);
+		return ClipsData {
+			factory,
+			filter: clips_filter,
+			selection: clips_selection,
+			sorter: clips_sorter,
+			store: clips_store,
+			scores: Arc::default(),
+		};
 	}
 
 	fn load_displays(&self, widget: &mut adw::ComboRow) -> Result<()> {
@@ -924,12 +985,105 @@ impl App {
 		return Ok(());
 	}
 
+	fn apply_sort(&self) {
+		let sorter = self.clips_data.sorter.clone();
+		let scores = self.clips_data.scores.clone();
+		let sort = self.sort_order;
+		sorter.set_sort_func(move |a, b| {
+			let a = a.downcast_ref::<ClipObject>().unwrap().clip();
+			let b = b.downcast_ref::<ClipObject>().unwrap().clip();
+			match sort {
+				SortOrder::NewestFirst => b.id.cmp(&a.id).into(),
+				SortOrder::OldestFirst => a.id.cmp(&b.id).into(),
+				SortOrder::Relevance => {
+					if let Ok(scores) = scores.read() {
+						let a_score = scores.get(&a.id).copied().unwrap_or(0);
+						let b_score = scores.get(&b.id).copied().unwrap_or(0);
+						return b_score.cmp(&a_score).into();
+					} else {
+						return b.id.cmp(&a.id).into(); // default NewestFirst
+					}
+				}
+			}
+		});
+	}
+
+	fn apply_game_filter(&self) {
+		let selected_game = self.selected_game;
+		self.clips_data.filter.set_filter_func(move |obj| {
+			let clip = obj.downcast_ref::<ClipObject>().unwrap().clip();
+			match selected_game {
+				None => true,
+				Some(game) => clip.game.map(|id| game == id).unwrap_or(false),
+			}
+		});
+	}
+
 	#[tracing::instrument(skip(self, msg, sender))]
 	async fn update(&mut self, msg: Message, sender: AsyncComponentSender<Self>) -> Result<()> {
 		info!("update");
 		let tx = sender.input_sender();
 		match msg {
 			Message::Void => {}
+			Message::Search(query) => {
+				if query.is_empty() {
+					self.user_overrode_sort = false;
+					if self.sort_order == SortOrder::Relevance {
+						self.sort_order = SortOrder::default();
+					}
+				} else if !self.user_overrode_sort {
+					self.sort_order = SortOrder::Relevance;
+				}
+
+				let mut scores = self.clips_data.scores.write().map_err(|x| eyre!("{x}"))?;
+				scores.clear();
+				if !query.is_empty() {
+					let mut searcher = search::Searcher::new();
+					for i in 0..self.clips_data.store.n_items() {
+						let clip = self
+							.clips_data
+							.store
+							.item(i)
+							.unwrap()
+							.downcast::<ClipObject>()
+							.unwrap()
+							.clip();
+
+						let score = searcher.score(&query, &clip.title).unwrap_or(0);
+						if score > 0 {
+							scores.insert(clip.id, score);
+						}
+					}
+
+					drop(scores);
+					self.clips_data.filter.set_filter_func({
+						let scores = self.clips_data.scores.clone();
+						move |obj| {
+							if let Ok(scores) = scores.read() {
+								let clip = obj.downcast_ref::<ClipObject>().unwrap().clip();
+								scores.contains_key(&clip.id)
+							} else {
+								true
+							}
+						}
+					});
+				} else {
+					drop(scores);
+					// self.clips_data.filter.set_filter_func(|_| true);
+					self.games.guard().send(0, true);
+					self.selected_game = None;
+					self.apply_game_filter();
+				}
+
+				self.apply_sort();
+			}
+			Message::SetSortOrder(sort, is_user) => {
+				if is_user {
+					self.user_overrode_sort = true;
+				}
+				self.sort_order = sort;
+				self.apply_sort();
+			}
 			Message::ShowAbout => {
 				relm4::view! {
 					adw::AboutDialog {
@@ -955,6 +1109,7 @@ impl App {
 			}
 			Message::ClearThumbnailCache => thumbnail::clear_cache()?,
 			Message::OpenClipFolder(id) => {
+				info!("clip id: {id}");
 				let clip = self.db.get_clip(id)?;
 				let file = File::open(clip.absolute_path(&self.settings.output_dir)).context("could not open file")?;
 
@@ -968,6 +1123,7 @@ impl App {
 				});
 			}
 			Message::OpenClip(id) => {
+				info!("clip id: {id}");
 				let clip = self.db.get_clip(id)?;
 				let file = gio::File::for_path(clip.absolute_path(&self.settings.output_dir));
 				let app = gio::AppInfo::default_for_type("video/mp4", false).context("no default app for video/mp4")?;
@@ -975,11 +1131,12 @@ impl App {
 					.context("could not open clip")?;
 			}
 			Message::DelPressed => {
-				let ids: Vec<ObjectId> = (0..self.clips_selection.n_items())
+				let ids: Vec<ObjectId> = (0..self.clips_data.selection.n_items())
 					.filter_map(|i| {
-						if self.clips_selection.is_selected(i) {
+						if self.clips_data.selection.is_selected(i) {
 							Some(
-								self.clips_selection
+								self.clips_data
+									.selection
 									.item(i)
 									.unwrap()
 									.downcast::<ClipObject>()
@@ -1029,13 +1186,14 @@ impl App {
 				});
 			}
 			Message::F2Pressed => {
-				let selected: Vec<u32> = (0..self.clips_selection.n_items())
-					.filter(|&i| self.clips_selection.is_selected(i))
+				let selected: Vec<u32> = (0..self.clips_data.selection.n_items())
+					.filter(|&i| self.clips_data.selection.is_selected(i))
 					.collect();
 
 				if selected.len() == 1 {
 					let obj = self
-						.clips_selection
+						.clips_data
+						.selection
 						.item(selected[0])
 						.unwrap()
 						.downcast::<ClipObject>()
@@ -1045,6 +1203,7 @@ impl App {
 				}
 			}
 			Message::RenameClip(clip) => {
+				info!("clip id: {clip}");
 				self.renaming_clip = clip;
 				self.input_dialog
 					.emit(InputDialogMessage::Show(self.db.get_clip(clip)?.title));
@@ -1117,21 +1276,32 @@ impl App {
 			}
 			Message::LoadClips => {
 				let clips = self.db.get_clips()?;
-				self.clips_store.remove_all();
+				self.clips_data.store.remove_all();
 				for clip in clips {
-					self.clips_store.append(&ClipObject::new(clip));
+					self.clips_data.store.append(&ClipObject::new(clip));
 				}
 
-				self.clips_filter.changed(gtk::FilterChange::Different);
+				self.clips_data.filter.changed(gtk::FilterChange::Different);
 			}
 			Message::GamesLoaded(games) => {
 				let mut guard = self.games.guard();
 				guard.clear();
 				guard.push_back((0, "All games".to_string()));
 				for game in games {
-					guard.push_back((game.id, identifier::identify_game(&game.window_class).unwrap_or(game.window_class)));
+					guard.push_back((
+						game.id,
+						identifier::identify_game(&game.window)
+							.map(|x| x.name)
+							.unwrap_or(game.window.class),
+					));
 				}
 				guard.send(0, true);
+			}
+			Message::GameDeselected => {
+				let guard = self.games.guard();
+				if !guard.iter().any(|x| x.selected()) {
+					guard.send(0, true);
+				}
 			}
 			Message::GameSelected(index) => {
 				let guard = self.games.guard();
@@ -1145,14 +1315,8 @@ impl App {
 					guard.get(index.current_index()).map(|chip| chip.game_id)
 				};
 
-				let selected_game = self.selected_game;
-				self.clips_filter.set_filter_func(move |obj| {
-					let clip = obj.downcast_ref::<ClipObject>().unwrap().clip();
-					match selected_game {
-						None => true,
-						Some(game) => clip.game.map(|id| game == id).unwrap_or(false),
-					}
-				});
+				drop(guard);
+				self.apply_game_filter();
 			}
 			Message::SaveClip => self.recorder.clip()?,
 			Message::ToggleClipping => {
@@ -1208,13 +1372,12 @@ impl App {
 
 				let game_id = if window.fullscreen {
 					let games = self.db.get_games()?;
-					if let Some(game) = games.iter().find(|x| x.window_class == window.class) {
+					if let Some(game) = games.iter().find(|x| x.window == window) {
 						Some(game.id)
 					} else {
-						Some(self.db.add_game(Game {
-							id: 0,
-							window_class: window.class,
-						})?)
+						let id = self.db.add_game(Game { id: 0, window })?;
+						tx.emit(Message::GamesLoaded(self.db.get_games()?)); // TODO: should just append game, instead of loading all games again
+						Some(id)
 					}
 				} else {
 					None
@@ -1247,7 +1410,13 @@ impl App {
 struct GameChip {
 	name: String,
 	game_id: ObjectId,
-	selected: bool,
+	selected: Arc<AtomicBool>,
+}
+
+impl GameChip {
+	pub fn selected(&self) -> bool {
+		return self.selected.load(Ordering::Relaxed);
+	}
 }
 
 #[relm4::factory]
@@ -1264,22 +1433,31 @@ impl FactoryComponent for GameChip {
 			add_css_class: "pill",
 
 			#[watch]
-			set_active: self.selected,
+			set_active: self.selected.load(Ordering::Relaxed),
 
-			connect_toggled[sender, index] => move |btn| {
+			connect_toggled[sender, index, selected = self.selected.clone()] => move |btn| {
 				if btn.is_active() {
+					selected.store(true, Ordering::Relaxed);
 					sender.output(Message::GameSelected(index.clone())).unwrap();
+				} else {
+					selected.store(false, Ordering::Relaxed);
+					sender.output(Message::GameDeselected).unwrap();
 				}
 			}
 		}
 	}
 
 	fn init_model((game_id, name): Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
-		return Self { name, game_id, selected: false };
+		return Self {
+			name,
+			game_id,
+			selected: Arc::new(AtomicBool::new(false)),
+		};
 	}
 
 	fn update(&mut self, selected: Self::Input, _sender: FactorySender<Self>) {
-		self.selected = selected;
+		self.selected.store(selected, Ordering::Relaxed);
+		// self.selected = selected;
 	}
 }
 

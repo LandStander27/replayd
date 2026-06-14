@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use crate::prelude::*;
 
 pub struct Listener {
@@ -55,15 +57,12 @@ impl Listener {
 									tx.emit(Message::Error(format!("{e:#}")));
 								}
 
-								if buf.trim() == "\\settings" {
-									if let Err(e) = stream
-										.write_all(format!("{:#?}", db.read_settings().unwrap()).as_bytes())
-										.await
-										.context("could not write to stream")
-									{
-										error!(?e);
-										tx.emit(Message::Error(format!("{e:#}")));
-									}
+								if buf.trim() == "\\dbdata" {
+									let mut s = String::new();
+									writeln!(&mut s, "settings: {:#?}\n", db.read_settings().unwrap()).unwrap();
+									writeln!(&mut s, "games: {:#?}\n", db.get_games().unwrap()).unwrap();
+									writeln!(&mut s, "clips: {:#?}\n", db.get_clips().unwrap()).unwrap();
+									stream.write_all(s.as_bytes()).await.unwrap();
 								} else {
 									tx.emit(Message::ClipReceived(PathBuf::from(buf)));
 								}
