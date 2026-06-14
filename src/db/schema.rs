@@ -40,6 +40,8 @@ pub struct Clip {
 	pub game: Option<ObjectId>,
 	pub title: String,
 	pub path: PathBuf,
+	pub created: u64,
+	pub duration_secs: Option<u64>,
 }
 
 impl Clip {

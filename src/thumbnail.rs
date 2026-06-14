@@ -23,6 +23,27 @@ pub fn clear_cache() -> Result<()> {
 	return Ok(());
 }
 
+pub fn get_duration(path: &Path) -> Result<u64> {
+	gstreamer::init().context("could not init gstreamer")?;
+
+	let uri = format!("file://{}", path.display());
+	let pipeline = gstreamer::parse::launch(&format!("uridecodebin uri=\"{}\" ! fakesink", uri))
+		.context("could not launch gstreamer parser")?
+		.downcast::<gstreamer::Pipeline>()
+		.unwrap();
+
+	pipeline.set_state(gstreamer::State::Paused)?;
+	pipeline.state(gstreamer::ClockTime::from_seconds(5)).0?;
+
+	let duration = pipeline
+		.query_duration::<gstreamer::ClockTime>()
+		.context("could not get duration of clip")?
+		.seconds();
+
+	pipeline.set_state(gstreamer::State::Null)?;
+	return Ok(duration);
+}
+
 pub fn extract(clip: &Clip, library: &Path) -> Result<PathBuf> {
 	let dest = cache_path(clip)?;
 	if dest.exists() {

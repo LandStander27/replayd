@@ -765,6 +765,34 @@ impl AsyncComponent for App {
 	}
 }
 
+fn format_duration(secs: u64) -> String {
+	let h = secs / 3600;
+	let m = (secs % 3600) / 60;
+	let s = secs % 60;
+	if h > 0 {
+		return format!("{h}:{m:02}:{s:02}");
+	} else {
+		return format!("{m}:{s:02}");
+	}
+}
+
+fn format_date(timestamp: u64) -> String {
+	let dt: DateTime<Local> = DateTime::from_timestamp_secs(timestamp as i64)
+		.unwrap()
+		.with_timezone(&Local);
+	let now = Local::now();
+	let today = now.date_naive();
+	let clip_day = dt.date_naive();
+
+	if clip_day == today {
+		format!("Today at {}", dt.format("%l:%M %p").to_string().trim())
+	} else if clip_day == today.pred_opt().unwrap() {
+		format!("Yesterday at {}", dt.format("%l:%M %p").to_string().trim())
+	} else {
+		return format!("{} at {}", dt.format("%b %d %Y"), dt.format("%l:%M %p").to_string().trim());
+	}
+}
+
 fn newest_sort_first(a: &glib::Object, b: &glib::Object) -> gtk::Ordering {
 	let a = a.downcast_ref::<ClipObject>().unwrap().clip();
 	let b = b.downcast_ref::<ClipObject>().unwrap().clip();
@@ -811,18 +839,29 @@ impl App {
 						set_spacing: 0,
 						add_css_class: "card",
 
-						gtk::Stack {
-							add_named[Some("loading")] = &gtk::Spinner {
-								set_spinning: true,
-								set_halign: gtk::Align::Center,
-								set_valign: gtk::Align::Center,
-								set_height_request: 120,
+						gtk::Overlay {
+							add_overlay = &gtk::Label {
+								set_halign: gtk::Align::End,
+								set_valign: gtk::Align::End,
+								set_margin_end: 6,
+								set_margin_bottom: 6,
+								add_css_class: "caption",
+								inline_css: "background: rgba(0,0,0,0.6); border-radius: 4px; padding: 2px 5px; color: white;",
 							},
-							add_named[Some("thumb")] = &gtk::Picture {
-								set_height_request: 120,
-								set_content_fit: gtk::ContentFit::Cover
+
+							gtk::Stack {
+								add_named[Some("loading")] = &gtk::Spinner {
+									set_spinning: true,
+									set_halign: gtk::Align::Center,
+									set_valign: gtk::Align::Center,
+									set_height_request: 120,
+								},
+								add_named[Some("thumb")] = &gtk::Picture {
+									set_height_request: 120,
+									set_content_fit: gtk::ContentFit::Cover
+								},
+								set_visible_child_name: "loading"
 							},
-							set_visible_child_name: "loading"
 						},
 
 						gtk::Label {
@@ -875,21 +914,44 @@ impl App {
 				let card = item.child().unwrap().downcast::<gtk::Box>().unwrap();
 				let children = card.observe_children();
 
-				let stack = children.item(0).unwrap().downcast::<gtk::Stack>().unwrap();
+				let overlay = children
+					.item(0)
+					.unwrap()
+					.downcast::<gtk::Overlay>()
+					.unwrap();
+				let duration_label = overlay
+					.observe_children()
+					.item(1) // no clue why this should be 1, expected 0
+					.unwrap()
+					.downcast::<gtk::Label>()
+					.unwrap();
+
+				if let Some(secs) = clip.duration_secs {
+					duration_label.set_label(&format_duration(secs));
+					duration_label.set_visible(true);
+				} else {
+					duration_label.set_visible(false);
+				}
+
+				let stack = overlay.child().unwrap().downcast::<gtk::Stack>().unwrap();
 				let title = children.item(1).unwrap().downcast::<gtk::Label>().unwrap();
 				let meta = children.item(2).unwrap().downcast::<gtk::Label>().unwrap();
 
 				title.set_label(&clip.title);
 				let game = if let Some(game) = clip.game
 					&& let Ok(game) = db.get_game(game)
+					&& let Some(game) = identifier::identify_game(&game.window).map(|x| x.name)
 				{
-					identifier::identify_game(&game.window)
-						.map(|x| x.name)
-						.unwrap_or(game.window.class)
+					Some(game)
 				} else {
-					"".to_string()
+					None
 				};
-				meta.set_label(&game);
+
+				if let Some(game) = game {
+					meta.set_label(&format!("{} · {}", format_date(clip.created), game));
+				} else {
+					meta.set_label(&format_date(clip.created));
+				}
 
 				relm4::spawn_local({
 					let clip = clip.clone();
@@ -946,6 +1008,10 @@ impl App {
 			let stack = card
 				.observe_children()
 				.item(0)
+				.unwrap()
+				.downcast::<gtk::Overlay>()
+				.unwrap()
+				.child()
 				.unwrap()
 				.downcast::<gtk::Stack>()
 				.unwrap();
@@ -1240,7 +1306,10 @@ impl App {
 			Message::LoadSettings => self.settings = self.db.read_settings()?,
 			Message::Error(e) => self.error_dialog.show(e),
 			Message::Close => self.visible = false,
-			Message::ShowWindow => self.visible = true,
+			Message::ShowWindow => {
+				self.visible = true;
+				tx.emit(Message::LoadClips); // update timestamps on clips
+			}
 			Message::Exit => {
 				if self.recorder.is_active() {
 					self.recorder.stop().context("could not stop recording")?;
@@ -1370,7 +1439,7 @@ impl App {
 					.context("invalid clip recv")?
 					.to_path_buf();
 
-				let game_id = if window.fullscreen {
+				let game = if window.fullscreen {
 					let games = self.db.get_games()?;
 					if let Some(game) = games.iter().find(|x| x.window == window) {
 						Some(game.id)
@@ -1383,6 +1452,24 @@ impl App {
 					None
 				};
 
+				let duration_secs = tokio::task::spawn_blocking({
+					let path = path.clone();
+					move || thumbnail::get_duration(&path)
+				})
+				.await
+				.inspect_err(|e| error!(?e))
+				.inspect(|x| {
+					_ = x.as_ref().inspect_err(|e| error!(?e));
+				})
+				.map(|x| x.ok())
+				.ok()
+				.flatten();
+
+				let created = std::time::SystemTime::now()
+					.duration_since(std::time::UNIX_EPOCH)
+					.unwrap_or_default()
+					.as_secs();
+
 				let id = self
 					.db
 					.save_clip(Clip {
@@ -1393,7 +1480,9 @@ impl App {
 							.to_string_lossy()
 							.to_string(),
 						path: relative_path,
-						game: game_id,
+						game,
+						duration_secs,
+						created,
 					})
 					.context("could not save clip")?;
 
