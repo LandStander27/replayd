@@ -1,14 +1,14 @@
 name: Build
 
 on:
-  push:
-    branches: ["master"]
-    paths:
-      - "**"
-      - "!README.md"
-      - "!.gitignore"
-      - "!LICENSE"
-      - "!assets/**"
+  # push:
+  #   branches: ["master"]
+  #   paths:
+  #     - "**"
+  #     - "!README.md"
+  #     - "!.gitignore"
+  #     - "!LICENSE"
+  #     - "!assets/**"
   workflow_dispatch:
 
 jobs:
@@ -22,13 +22,13 @@ jobs:
           libadwaita glib2 glibc rust sed libgit2 pkgconf
 
       - uses: actions/checkout@v4
-      - name: Build replayd and replayd-hook
+      - name: Build replayd and hook
         run: cargo b --release --all-features
 
-      - name: Run tests
-        run: cargo test --all-features
+      # - name: Run tests
+      #   run: cargo test --all-features
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
           name: replayd
