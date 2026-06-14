@@ -3,9 +3,11 @@ use crate::prelude::*;
 mod confirm_dialog;
 mod error_dialog;
 mod input_dialog;
+mod select_dialog;
 pub use confirm_dialog::{ConfirmDialog, ConfirmDialogMessage, ConfirmDialogResponse, ConfirmDialogSettings};
 pub use error_dialog::ErrorDialog;
 pub use input_dialog::{InputDialog, InputDialogMessage, InputDialogResponse, InputDialogSettings};
+pub use select_dialog::{SelectDialog, SelectDialogMessage, SelectDialogResponse, SelectDialogSettings};
 
 #[relm4::widget_template(pub)]
 impl WidgetTemplate for DialogTemplate {
@@ -14,6 +16,7 @@ impl WidgetTemplate for DialogTemplate {
 		adw::Dialog {
 			inline_css: "border-bottom-left-radius: 13px",
 			inline_css: "border-bottom-right-radius: 13px",
+			set_content_width: 360,
 
 			#[wrap(Some)]
 			set_child = &gtk::Box {

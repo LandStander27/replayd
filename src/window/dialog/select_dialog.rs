@@ -1,50 +1,52 @@
 use crate::prelude::*;
 
 #[derive(Debug)]
-pub enum InputDialogMessage {
-	Show(String),
+pub enum SelectDialogMessage {
+	Show(Vec<String>),
 	Hide,
-	Response(InputDialogResponse),
+	Response(SelectDialogResponse),
+	Confirm,
 }
 
 #[derive(Debug)]
-pub enum InputDialogResponse {
-	Confirm(String),
+pub enum SelectDialogResponse {
+	Confirm(u64),
 	Cancel,
 }
 
 #[derive(Debug)]
-pub struct InputDialogSettings<T: IsA<gtk::Widget>> {
+pub struct SelectDialogSettings<T: IsA<gtk::Widget>> {
 	pub window: T,
 	pub title: String,
+	pub confirm_label: String,
 	pub cancel_label: String,
 }
 
 #[derive(Debug, Clone)]
-pub struct InputDialog<T: IsA<gtk::Widget>> {
+pub struct SelectDialog<T: IsA<gtk::Widget>> {
 	window: T,
 	root: adw::Dialog,
-	initial: String,
+	dropdown: gtk::DropDown,
 }
 
-impl<T: IsA<gtk::Widget>> InputDialog<T> {
-	fn new(window: T, root: adw::Dialog) -> Self {
-		return Self {
-			window,
-			root,
-			initial: String::new(),
-		};
-	}
-}
+// impl<T: IsA<gtk::Widget>> SelectDialog<T> {
+// 	fn new(window: T, root: adw::Dialog) -> Self {
+// 		return Self {
+// 			window,
+// 			root,
+// 			initial: String::new(),
+// 		};
+// 	}
+// }
 
 #[relm4::component(pub async)]
-impl<T: IsA<gtk::Widget>> SimpleAsyncComponent for InputDialog<T> {
-	type Init = InputDialogSettings<T>;
-	type Input = InputDialogMessage;
-	type Output = InputDialogResponse;
+impl<T: IsA<gtk::Widget>> SimpleAsyncComponent for SelectDialog<T> {
+	type Init = SelectDialogSettings<T>;
+	type Input = SelectDialogMessage;
+	type Output = SelectDialogResponse;
 
 	view! {
-		#[name = "root"]
+		#[name(root)]
 		adw::Dialog {
 			inline_css: "border-bottom-left-radius: 13px",
 			inline_css: "border-bottom-right-radius: 13px",
@@ -69,14 +71,10 @@ impl<T: IsA<gtk::Widget>> SimpleAsyncComponent for InputDialog<T> {
 						set_label: &settings.title,
 					},
 
-					gtk::Entry {
-						#[watch]
-						set_text: &this.initial,
+					#[local_ref]
+					dropdown -> gtk::DropDown {
 						set_vexpand: true,
-						set_valign: gtk::Align::Fill,
-						connect_activate[sender] => move |entry| {
-							sender.input(InputDialogMessage::Response(InputDialogResponse::Confirm(entry.text().to_string())));
-						}
+						set_valign: gtk::Align::Center,
 					},
 				},
 
@@ -91,13 +89,27 @@ impl<T: IsA<gtk::Widget>> SimpleAsyncComponent for InputDialog<T> {
 						set_vexpand: true,
 						set_valign: gtk::Align::End,
 
+
 						gtk::Button {
 							add_css_class: "flat",
 							set_hexpand: true,
 							inline_css: "padding: 10px 14px",
 							inline_css: "border-radius: 0px",
 							inline_css: "border-width: 0px",
-							connect_clicked => InputDialogMessage::Response(InputDialogResponse::Cancel),
+							connect_clicked => SelectDialogMessage::Confirm,
+
+							gtk::Label {
+								set_label: &settings.confirm_label,
+								add_css_class: "flat",
+							}
+						},
+						gtk::Button {
+							add_css_class: "flat",
+							set_hexpand: true,
+							inline_css: "padding: 10px 14px",
+							inline_css: "border-radius: 0px",
+							inline_css: "border-width: 0px",
+							connect_clicked => SelectDialogMessage::Response(SelectDialogResponse::Cancel),
 
 							gtk::Label {
 								set_label: &settings.cancel_label,
@@ -111,7 +123,13 @@ impl<T: IsA<gtk::Widget>> SimpleAsyncComponent for InputDialog<T> {
 	}
 
 	async fn init(settings: Self::Init, root: Self::Root, sender: AsyncComponentSender<Self>) -> AsyncComponentParts<Self> {
-		let this = InputDialog::new(settings.window, root.clone());
+		let this = SelectDialog {
+			window: settings.window,
+			root: root.clone(),
+			dropdown: gtk::DropDown::default(),
+		};
+		let dropdown = this.dropdown.clone();
+
 		let widgets = view_output!();
 
 		return AsyncComponentParts { model: this, widgets };
@@ -119,14 +137,15 @@ impl<T: IsA<gtk::Widget>> SimpleAsyncComponent for InputDialog<T> {
 
 	async fn update(&mut self, msg: Self::Input, sender: AsyncComponentSender<Self>) {
 		match msg {
-			InputDialogMessage::Show(initial) => {
-				self.initial = initial;
+			SelectDialogMessage::Show(options) => {
+				let list = gtk::StringList::new(&options.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+				self.dropdown.set_model(Some(&list));
+				self.dropdown.set_selected(0);
 				self.root.present(Some(&self.window));
 			}
-			InputDialogMessage::Hide => {
-				self.root.close();
-			}
-			InputDialogMessage::Response(response) => {
+			SelectDialogMessage::Confirm => sender.input(SelectDialogMessage::Response(SelectDialogResponse::Confirm(self.dropdown.selected() as u64))),
+			SelectDialogMessage::Hide => _ = self.root.close(),
+			SelectDialogMessage::Response(response) => {
 				self.root.close();
 				sender.output(response).unwrap();
 			}

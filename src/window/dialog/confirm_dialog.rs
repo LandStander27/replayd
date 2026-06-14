@@ -45,6 +45,17 @@ impl<T: IsA<gtk::Widget>> SimpleAsyncComponent for ConfirmDialog<T> {
 		#[root]
 		#[template]
 		DialogTemplate {
+			add_controller = gtk::EventControllerKey {
+				connect_key_pressed[sender] => move |_, key, _, _| {
+					if key == gdk::Key::Return || key == gdk::Key::KP_Enter {
+						sender.input(ConfirmDialogMessage::Response(ConfirmDialogResponse::Confirm));
+						glib::Propagation::Stop
+					} else {
+						glib::Propagation::Proceed
+					}
+				}
+			},
+
 			#[template_child]
 			title {
 				set_text: &settings.title
@@ -88,7 +99,7 @@ impl<T: IsA<gtk::Widget>> SimpleAsyncComponent for ConfirmDialog<T> {
 		}
 	}
 
-	async fn init(settings: Self::Init, root: Self::Root, _sender: AsyncComponentSender<Self>) -> AsyncComponentParts<Self> {
+	async fn init(settings: Self::Init, root: Self::Root, sender: AsyncComponentSender<Self>) -> AsyncComponentParts<Self> {
 		let this = ConfirmDialog::new(settings.window, root.root.clone());
 		let widgets = view_output!();
 

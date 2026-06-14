@@ -165,6 +165,21 @@ impl Db {
 		return v;
 	}
 
+	pub fn set_clip_game(&self, id: ObjectId, game: Option<ObjectId>) -> Result<()> {
+		return self.write(|writer| {
+			let mut table = writer.open_table(CLIPS_TABLE)?;
+			let mut json = table
+				.get_mut(id)
+				.context("could not get clip")?
+				.context("invalid clip")?;
+			let mut clip = Clip::decode(json.value())?;
+			clip.game = game;
+			json.insert(clip.encode()?.as_slice())
+				.context("could not modify clip")?;
+			return Ok(());
+		});
+	}
+
 	pub fn save_clip(&self, mut clip: Clip) -> Result<u64> {
 		return self.write(|writer| {
 			let mut table = writer.open_table(CLIPS_TABLE)?;
@@ -197,7 +212,7 @@ impl Db {
 		return self.db.begin_read().context("could not begin read to db");
 	}
 
-	fn schema_version(&self) -> Result<u64> {
+	pub fn schema_version(&self) -> Result<u64> {
 		let reader = self.reader()?;
 
 		// if meta table doesn't exist yet, version is 0

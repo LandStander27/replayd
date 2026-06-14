@@ -36,6 +36,7 @@ pub use tokio::task::JoinHandle;
 pub use tracing::{debug, error, info, trace, warn};
 pub use window::dialog::{
 	ConfirmDialog, ConfirmDialogMessage, ConfirmDialogResponse, ConfirmDialogSettings, ErrorDialog, InputDialog, InputDialogMessage, InputDialogResponse, InputDialogSettings,
+	SelectDialog, SelectDialogMessage, SelectDialogResponse, SelectDialogSettings,
 };
 pub use window::root::Message;
 pub use window::tray::Tray;

@@ -33,6 +33,9 @@ struct App {
 	delete_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
 	delete_db_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
 	input_dialog: AsyncController<InputDialog<adw::ApplicationWindow>>,
+	select_game_dialog: AsyncController<SelectDialog<adw::ApplicationWindow>>,
+	game_id_list: Vec<Option<ObjectId>>,
+	relevant_clip: Option<ObjectId>,
 	deleting_clips: Vec<ObjectId>,
 	renaming_clip: ObjectId,
 	audio_player: Option<AudioPlayer>,
@@ -75,6 +78,8 @@ pub enum Message {
 	RenameClipConfirm(String),
 	OpenClipFolder(ObjectId),
 	OpenClip(ObjectId),
+	SelectGame(ObjectId),
+	SelectGameConfirm(ObjectId),
 	F2Pressed,
 	DelPressed,
 	SetSortOrder(SortOrder, bool),
@@ -84,6 +89,7 @@ relm4::new_action_group!(ClipActionGroup, "clip");
 relm4::new_stateless_action!(ClipOpen, ClipActionGroup, "open");
 relm4::new_stateless_action!(ClipOpenFolder, ClipActionGroup, "open-folder");
 relm4::new_stateless_action!(ClipRename, ClipActionGroup, "rename");
+relm4::new_stateless_action!(ClipSelectGame, ClipActionGroup, "select-game");
 relm4::new_stateless_action!(ClipDelete, ClipActionGroup, "delete");
 
 relm4::new_action_group!(WindowActionGroup, "app");
@@ -680,6 +686,17 @@ impl AsyncComponent for App {
 					InputDialogResponse::Confirm(s) => Message::RenameClipConfirm(s),
 					_ => Message::Void,
 				}),
+			select_game_dialog: SelectDialog::builder()
+				.launch(SelectDialogSettings {
+					window: root.clone(),
+					title: "Set game".to_string(),
+					confirm_label: "Set".to_string(),
+					cancel_label: "Cancel".to_string(),
+				})
+				.forward(sender.input_sender(), |msg| match msg {
+					SelectDialogResponse::Confirm(id) => Message::SelectGameConfirm(id),
+					_ => Message::Void,
+				}),
 			visible: true,
 			tray: match Tray::new(sender.input_sender().clone()).spawn().await {
 				Ok(o) => o,
@@ -713,6 +730,8 @@ impl AsyncComponent for App {
 			deleting_clips: Vec::new(),
 			renaming_clip: 0,
 			audio_player,
+			relevant_clip: None,
+			game_id_list: vec![],
 		};
 
 		let games_box = app.games.widget();
@@ -824,6 +843,7 @@ impl App {
 					gio::Menu {
 						append: (Some("Open"), Some(&ClipOpen::action_name())),
 						append: (Some("Rename"), Some(&ClipRename::action_name())),
+						append: (Some("Select game"), Some(&ClipSelectGame::action_name())),
 						append: (Some("Show in Files"), Some(&ClipOpenFolder::action_name())),
 						append_section: (None, &danger_section),
 					},
@@ -982,6 +1002,10 @@ impl App {
 				});
 
 				let mut group = RelmActionGroup::<ClipActionGroup>::new();
+				group.add_action(RelmAction::<ClipSelectGame>::new_stateless({
+					let sender = sender.clone();
+					move |_| sender.emit(Message::SelectGame(clip.id))
+				}));
 				group.add_action(RelmAction::<ClipRename>::new_stateless({
 					let sender = sender.clone();
 					move |_| sender.emit(Message::RenameClip(clip.id))
@@ -1091,6 +1115,31 @@ impl App {
 		let tx = sender.input_sender();
 		match msg {
 			Message::Void => {}
+			Message::SelectGame(id) => {
+				let games = self.db.get_games()?;
+				self.relevant_clip = Some(id);
+				self.game_id_list = std::iter::once(None)
+					.chain(games.iter().map(|g| Some(g.id)))
+					.collect();
+
+				let mut options = vec!["None".to_string()];
+				for game in games {
+					let name = identifier::identify_game(&game.window)
+						.map(|x| x.name)
+						.unwrap_or_else(|| game.window.class);
+					options.push(name);
+				}
+
+				self.select_game_dialog
+					.emit(SelectDialogMessage::Show(options));
+			}
+			Message::SelectGameConfirm(index) => {
+				let game_id_list = std::mem::take(&mut self.game_id_list);
+				let game_id = game_id_list.get(index as usize).copied().flatten();
+				let clip = self.relevant_clip.take().unwrap();
+				self.db.set_clip_game(clip, game_id)?;
+				tx.emit(Message::LoadClips);
+			}
 			Message::Search(query) => {
 				if query.is_empty() {
 					self.user_overrode_sort = false;

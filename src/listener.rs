@@ -57,15 +57,47 @@ impl Listener {
 									tx.emit(Message::Error(format!("{e:#}")));
 								}
 
-								if buf.trim() == "\\dbdata" {
+								#[cfg(debug_assertions)]
+								if buf.trim() == "/db" {
 									let mut s = String::new();
-									writeln!(&mut s, "settings: {:#?}\n", db.read_settings().unwrap()).unwrap();
-									writeln!(&mut s, "games: {:#?}\n", db.get_games().unwrap()).unwrap();
-									writeln!(&mut s, "clips: {:#?}\n", db.get_clips().unwrap()).unwrap();
+									writeln!(
+										&mut s,
+										"schema version: {}\n",
+										db.schema_version()
+											.map(|x| format!("{x:#?}"))
+											.unwrap_or_else(|e| format!("Error: {e:#}"))
+									)
+									.unwrap();
+									writeln!(
+										&mut s,
+										"settings: {}\n",
+										db.read_settings()
+											.map(|x| format!("{x:#?}"))
+											.unwrap_or_else(|e| format!("Error: {e:#}"))
+									)
+									.unwrap();
+									writeln!(
+										&mut s,
+										"games: {}\n",
+										db.get_games()
+											.map(|x| format!("{x:#?}"))
+											.unwrap_or_else(|e| format!("Error: {e:#}"))
+									)
+									.unwrap();
+									writeln!(
+										&mut s,
+										"clips: {}\n",
+										db.get_clips()
+											.map(|x| format!("{x:#?}"))
+											.unwrap_or_else(|e| format!("Error: {e:#}"))
+									)
+									.unwrap();
 									stream.write_all(s.as_bytes()).await.unwrap();
-								} else {
-									tx.emit(Message::ClipReceived(PathBuf::from(buf)));
+
+									return;
 								}
+
+								tx.emit(Message::ClipReceived(PathBuf::from(buf)));
 							});
 						}
 					}
