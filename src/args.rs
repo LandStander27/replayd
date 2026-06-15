@@ -17,20 +17,26 @@ pub struct Args {
 
 	#[arg(short, long, help = "increase verbosity")]
 	pub verbose: bool,
+
+	#[arg(long, help = "open the window minimized")]
+	pub open_minimized: bool,
 }
 
-pub async fn args() -> &'static Args {
-	return ARGS
-		.get_or_init(async || {
-			let args = Args::parse();
+pub async fn parse() {
+	ARGS.get_or_init(async || {
+		let args = Args::parse();
 
-			if args.version {
-				eprintln!("replayd {}", version::version);
-				eprintln!("{}", Recorder::get_version().await);
-				std::process::exit(0);
-			}
+		if args.version {
+			eprintln!("replayd {}", version::version);
+			eprintln!("{}", Recorder::get_version().await);
+			std::process::exit(0);
+		}
 
-			args
-		})
-		.await;
+		args
+	})
+	.await;
+}
+
+pub fn args() -> &'static Args {
+	return ARGS.get().unwrap();
 }

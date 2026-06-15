@@ -20,7 +20,9 @@ impl ShortcutsSession {
 	pub async fn start(tx: relm4::Sender<Message>, window: &impl IsA<gtk::Native>) -> Result<Self> {
 		let ident = WindowIdentifier::from_native(window)
 			.await
-			.context("could not get identify window")?;
+			.context("could not get WindowIdentifier")
+			.inspect_err(|e| warn!(?e))
+			.ok();
 
 		let global_shortcuts = GlobalShortcuts::new()
 			.await
@@ -34,7 +36,7 @@ impl ShortcutsSession {
 			NewShortcut::new("toggle-clipping", "Toggle screen recording for clipping"),
 		];
 		let request = global_shortcuts
-			.bind_shortcuts(&session, &shortcuts, Some(&ident), BindShortcutsOptions::default())
+			.bind_shortcuts(&session, &shortcuts, ident.as_ref(), BindShortcutsOptions::default())
 			.await
 			.context("could not bind shortcuts")?;
 		match request.response() {

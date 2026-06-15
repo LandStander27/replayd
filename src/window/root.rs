@@ -570,6 +570,7 @@ impl AsyncComponent for App {
 		relm4::view! {
 			#[local]
 			root {
+				set_visible: !args::args().open_minimized,
 				set_title: Some("Loading..."),
 
 				#[name(spinner)]
@@ -701,7 +702,7 @@ impl AsyncComponent for App {
 					SelectDialogResponse::Confirm(id) => Message::SelectGameConfirm(id),
 					_ => Message::Void,
 				}),
-			visible: true,
+			visible: !args::args().open_minimized,
 			tray: match Tray::new(sender.input_sender().clone()).spawn().await {
 				Ok(o) => o,
 				Err(e) => {
@@ -1624,6 +1625,7 @@ pub fn run() -> Result<()> {
 	});
 
 	RelmApp::new("dev.land.Replayd")
+		.visible_on_activate(false)
 		.with_args(vec![])
 		.run_async::<App>("Replayd".to_string());
 

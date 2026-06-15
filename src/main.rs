@@ -18,18 +18,13 @@ use prelude::*;
 fn main() -> Result<()> {
 	color_eyre::install().context("could not install handler")?;
 
-	{
-		let runtime = tokio::runtime::Builder::new_current_thread()
-			.enable_io()
-			.build_local(tokio::runtime::LocalOptions::default())
-			.context("could not create tokio runtime")?;
-		runtime.block_on(async {
-			args::args().await; // ensures args are valid
+	tokio::runtime::Builder::new_current_thread()
+		.enable_io()
+		.build_local(tokio::runtime::LocalOptions::default())
+		.context("could not create tokio runtime")?
+		.block_on(args::parse());
 
-			log::init().await.context("could not init logger")
-		})?;
-	}
-
+	log::init().context("could not init logger")?;
 	window::root::run().context("app failed")?;
 
 	return Ok(());

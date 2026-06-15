@@ -2,9 +2,9 @@ use tracing_subscriber::layer::SubscriberExt;
 
 use crate::prelude::*;
 
-pub async fn init() -> Result<()> {
+pub fn init() -> Result<()> {
 	let filter = tracing_subscriber::EnvFilter::builder()
-		.parse(if !args::args().await.verbose {
+		.parse(if !args::args().verbose {
 			"info"
 		} else {
 			"trace"
