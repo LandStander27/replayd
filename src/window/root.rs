@@ -39,6 +39,8 @@ struct App {
 	deleting_clips: Vec<ObjectId>,
 	renaming_clip: ObjectId,
 	audio_player: Option<AudioPlayer>,
+	main_stack: gtk::Stack,
+	search_debounce: Option<glib::SourceId>,
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, strum::FromRepr)]
@@ -60,6 +62,7 @@ pub enum Message {
 	Init,
 	Error(String),
 	LoadClips,
+	SearchChanged(String),
 	Search(String),
 	GamesLoaded(Vec<db::Game>),
 	GameSelected(DynamicIndex),
@@ -125,7 +128,7 @@ impl AsyncComponent for App {
 							set_placeholder_text: Some("Search clips..."),
 							add_css_class: "pill",
 
-							connect_search_changed[sender] => move |entry| sender.input(Message::Search(entry.text().to_string()))
+							connect_search_changed[sender] => move |entry| sender.input(Message::SearchChanged(entry.text().to_string()))
 						},
 
 						gtk::DropDown {
@@ -231,46 +234,70 @@ impl AsyncComponent for App {
 					}
 				},
 
-				gtk::ScrolledWindow {
-					set_hexpand: true,
-					set_vexpand: true,
-					set_margin_start: 12,
-					set_margin_end: 12,
-					set_margin_bottom: 12,
+				#[local_ref]
+				main_stack -> gtk::Stack {
+					add_named[Some("loading")] = &gtk::Spinner {
+						start: (),
+						set_halign: gtk::Align::Center,
+						set_valign: gtk::Align::Center,
+					},
 
-					gtk::GridView {
-						set_model: Some(&clips_data.selection),
-						set_factory: Some(&clips_data.factory),
-						set_max_columns: 6,
-						set_min_columns: 1,
-						set_single_click_activate: false,
+					add_named[Some("empty-library")] = &adw::StatusPage {
+						set_title: "No clips yet",
+						set_description: Some("Enable the replay buffer and save your first clip!"),
+						set_icon_name: Some("camera-video-symbolic"),
+					},
 
-						connect_activate[sender, selection = clips_data.selection] => move |_, pos| {
-							let obj = selection
-								.item(pos)
-								.unwrap()
-								.downcast::<ClipObject>()
-								.unwrap();
-							sender.input(Message::OpenClip(obj.clip().id));
-						},
+					add_named[Some("empty-search")] = &adw::StatusPage {
+						set_title: "No results",
+						set_description: Some("Try another search term."),
+						set_icon_name: Some("system-search-symbolic"),
+					},
 
-						add_controller = gtk::EventControllerKey {
-							connect_key_pressed[sender] => move |_, key, _, _| {
-								match key {
-									gdk::Key::F2 => {
-										sender.input(Message::F2Pressed);
-										glib::Propagation::Stop
+					add_named[Some("grid")] = &gtk::ScrolledWindow {
+						set_hexpand: true,
+						set_vexpand: true,
+						set_margin_start: 12,
+						set_margin_end: 12,
+						set_margin_bottom: 12,
+
+						gtk::GridView {
+							set_model: Some(&clips_data.selection),
+							set_factory: Some(&clips_data.factory),
+							set_max_columns: 6,
+							set_min_columns: 1,
+							set_single_click_activate: false,
+
+							connect_activate[sender, selection = clips_data.selection] => move |_, pos| {
+								let obj = selection
+									.item(pos)
+									.unwrap()
+									.downcast::<ClipObject>()
+									.unwrap();
+								sender.input(Message::OpenClip(obj.clip().id));
+							},
+
+							add_controller = gtk::EventControllerKey {
+								connect_key_pressed[sender] => move |_, key, _, _| {
+									match key {
+										gdk::Key::F2 => {
+											sender.input(Message::F2Pressed);
+											glib::Propagation::Stop
+										}
+										gdk::Key::Delete => {
+											sender.input(Message::DelPressed);
+											glib::Propagation::Stop
+										}
+										_ => glib::Propagation::Proceed,
 									}
-									gdk::Key::Delete => {
-										sender.input(Message::DelPressed);
-										glib::Propagation::Stop
-									}
-									_ => glib::Propagation::Proceed,
 								}
 							}
 						}
-					}
-				}
+					},
+
+					set_visible_child_name: "loading",
+				},
+
 			},
 			add_titled_with_icon[Some("settings"), "Settings", "emblem-system-symbolic"] = &gtk::Box {
 				adw::PreferencesPage {
@@ -478,7 +505,7 @@ impl AsyncComponent for App {
 							},
 						},
 						adw::SwitchRow {
-							set_title: "Make a sound feedback whenever you save a clip",
+							set_title: "Make a sound feedback whenever you save a clip (requires restart)",
 
 							#[watch]
 							set_active: app.settings.sound_feedback,
@@ -737,8 +764,11 @@ impl AsyncComponent for App {
 			audio_player,
 			relevant_clip: None,
 			game_id_list: vec![],
+			main_stack: gtk::Stack::default(),
+			search_debounce: None,
 		};
 
+		let main_stack = &app.main_stack;
 		let games_box = app.games.widget();
 		let mut widgets = view_output!();
 
@@ -937,6 +967,7 @@ impl App {
 				let clip = clip_obj.clip();
 
 				let card = item.child().unwrap().downcast::<gtk::Box>().unwrap();
+				card.set_widget_name(&clip.id.to_string());
 				let children = card.observe_children();
 
 				let overlay = children
@@ -981,11 +1012,17 @@ impl App {
 				relm4::spawn_local({
 					let clip = clip.clone();
 					let library = library.clone();
+					let expected_id = clip.id;
+					let card = card.clone();
 					async move {
 						let thumb_path = tokio::task::spawn_blocking(move || thumbnail::extract(&clip, &library))
 							.await
 							.ok()
 							.and_then(|r| r.ok());
+
+						if card.widget_name() != expected_id.to_string() {
+							return; // item was rebound
+						}
 
 						if let Some(thumb_path) = thumb_path {
 							let thumb = stack
@@ -1114,6 +1151,21 @@ impl App {
 		});
 	}
 
+	fn set_main_stack(&self) -> Result<()> {
+		if self
+			.db
+			.get_num_clips()
+			.context("could not get number of clips")?
+			== 0
+		{
+			self.main_stack.set_visible_child_name("empty-library");
+		} else {
+			self.main_stack.set_visible_child_name("grid");
+		}
+
+		return Ok(());
+	}
+
 	#[tracing::instrument(skip(self, msg, sender))]
 	async fn update(&mut self, msg: Message, sender: AsyncComponentSender<Self>) -> Result<()> {
 		info!("update");
@@ -1145,8 +1197,20 @@ impl App {
 				self.db.set_clip_game(clip, game_id)?;
 				tx.emit(Message::LoadClips);
 			}
+			Message::SearchChanged(query) => {
+				if let Some(id) = self.search_debounce.take() {
+					id.remove();
+				}
+
+				let tx = tx.clone();
+				self.search_debounce = Some(glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
+					tx.emit(Message::Search(query));
+				}));
+			}
 			Message::Search(query) => {
+				self.search_debounce = None;
 				if query.is_empty() {
+					self.set_main_stack()?;
 					self.user_overrode_sort = false;
 					if self.sort_order == SortOrder::Relevance {
 						self.sort_order = SortOrder::default();
@@ -1157,6 +1221,9 @@ impl App {
 
 				let mut scores = self.clips_data.scores.write().map_err(|x| eyre!("{x}"))?;
 				scores.clear();
+				self.games.guard().send(0, true);
+				self.selected_game = None;
+				self.apply_game_filter();
 				if !query.is_empty() {
 					let mut searcher = search::Searcher::new();
 					for i in 0..self.clips_data.store.n_items() {
@@ -1187,12 +1254,16 @@ impl App {
 							}
 						}
 					});
+					if self.clips_data.selection.n_items() == 0 {
+						self.main_stack.set_visible_child_name("empty-search");
+					} else {
+						self.set_main_stack()?;
+					}
 				} else {
 					drop(scores);
 					// self.clips_data.filter.set_filter_func(|_| true);
 					self.games.guard().send(0, true);
 					self.selected_game = None;
-					self.apply_game_filter();
 				}
 
 				self.apply_sort();
@@ -1246,7 +1317,7 @@ impl App {
 				info!("clip id: {id}");
 				let clip = self.db.get_clip(id)?;
 				let file = gio::File::for_path(clip.absolute_path(&self.settings.output_dir));
-				let app = gio::AppInfo::default_for_type("video/mp4", false).context("no default app for video/mp4")?;
+				let app = gio::AppInfo::default_for_type("video/mp4", false).context("no default app for video/mp4")?; // the app for mp4s is likely the same for all video formats
 				app.launch(&[file], gio::AppLaunchContext::NONE)
 					.context("could not open clip")?;
 			}
@@ -1279,29 +1350,80 @@ impl App {
 				self.delete_dialog.emit(ConfirmDialogMessage::Show);
 			}
 			Message::DeleteClipsConfirm => {
-				let clips = std::mem::take(&mut self.deleting_clips);
+				let ids = std::mem::take(&mut self.deleting_clips);
 				let db = self.db.clone();
 				let library = self.settings.output_dir.clone();
+				let tx = tx.clone();
 				sender.oneshot_command(async move {
-					for id in clips {
-						let clip = match db.get_clip(id) {
-							Ok(o) => o,
-							Err(e) => {
-								error!(?e);
-								return Message::Error(format!("{e:#}"));
-							}
-						};
+					let mut clips = match db.get_clips() {
+						Ok(o) => o,
+						Err(e) => {
+							error!(?e);
+							return Message::Error(format!("{e:#}"));
+						}
+					};
+
+					for i in (0..clips.len())
+						.filter(|i| ids.contains(&clips[*i].id.clone()))
+						.rev()
+						.collect::<Vec<usize>>()
+					{
+						let clip = &clips[i];
 
 						if let Err(e) = std::fs::remove_file(clip.absolute_path(&library)).context("could not delete clip file") {
 							error!(?e);
 							return Message::Error(format!("{e:#}"));
 						}
 
-						if let Err(e) = db.delete_clip(id) {
+						if let Err(e) = db.delete_clip(clip.id) {
+							error!(?e);
+							return Message::Error(format!("{e:#}"));
+						}
+
+						clips.remove(i);
+					}
+
+					let mut clips_per_games: HashMap<ObjectId, u64> = HashMap::new();
+					let games = match db.get_games() {
+						Ok(o) => o,
+						Err(e) => {
+							error!(?e);
+							return Message::Error(format!("{e:#}"));
+						}
+					};
+					for game in &games {
+						clips_per_games.insert(game.id, 0);
+					}
+					for clip in &clips {
+						if let Some(game) = clip.game {
+							*clips_per_games.entry(game).or_default() += 1;
+						}
+					}
+
+					let mut deleted_game = false;
+					for game in clips_per_games
+						.iter()
+						.filter_map(|(&x, &y)| if y == 0 { Some(x) } else { None })
+					{
+						deleted_game = true;
+						if let Err(e) = db.delete_game(game) {
 							error!(?e);
 							return Message::Error(format!("{e:#}"));
 						}
 					}
+
+					if deleted_game {
+						drop(games);
+						let games = match db.get_games() {
+							Ok(o) => o,
+							Err(e) => {
+								error!(?e);
+								return Message::Error(format!("{e:#}"));
+							}
+						};
+						tx.emit(Message::GamesLoaded(games));
+					}
+
 					return Message::LoadClips;
 				});
 			}
@@ -1398,10 +1520,21 @@ impl App {
 				tx.emit(Message::LoadClips);
 			}
 			Message::LoadClips => {
-				let clips = self.db.get_clips()?;
-				self.clips_data.store.remove_all();
-				for clip in clips {
-					self.clips_data.store.append(&ClipObject::new(clip));
+				self.set_main_stack()?;
+
+				if self
+					.db
+					.get_num_clips()
+					.context("could not get clip amount")?
+					== 0
+				{
+					self.clips_data.store.remove_all();
+				} else {
+					let clips = self.db.get_clips()?;
+					self.clips_data.store.remove_all();
+					for clip in clips {
+						self.clips_data.store.append(&ClipObject::new(clip));
+					}
 				}
 
 				self.clips_data.filter.changed(gtk::FilterChange::Different);

@@ -1,4 +1,4 @@
-use redb::{Database, ReadTransaction, ReadableDatabase, ReadableTable, TableDefinition, WriteTransaction, backends::InMemoryBackend};
+use redb::{Database, ReadTransaction, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition, WriteTransaction, backends::InMemoryBackend};
 
 use crate::prelude::*;
 
@@ -81,6 +81,13 @@ impl Db {
 			return Ok(id);
 		});
 	}
+	pub fn delete_game(&self, id: ObjectId) -> Result<()> {
+		return self.write(|writer| {
+			let mut table = writer.open_table(GAMES_TABLE)?;
+			table.remove(id).context("could not delete game")?;
+			return Ok(());
+		});
+	}
 
 	pub fn get_game(&self, id: ObjectId) -> Result<Game> {
 		let reader = self.reader()?;
@@ -106,6 +113,12 @@ impl Db {
 			.collect();
 
 		return v;
+	}
+
+	pub fn get_num_clips(&self) -> Result<usize> {
+		let reader = self.reader()?;
+		let table = reader.open_table(CLIPS_TABLE)?;
+		return Ok(table.len().inspect_err(|e| error!(?e)).unwrap_or_default() as usize);
 	}
 
 	pub fn get_clip(&self, id: ObjectId) -> Result<Clip> {
@@ -141,14 +154,6 @@ impl Db {
 			table.remove(id).context("could not delete clip")?;
 			return Ok(());
 		});
-		// let reader = self.reader()?;
-		// let table = reader.open_table(CLIPS_TABLE)?;
-		// let json = table
-		// 	.get(id)
-		// 	.context("could not read clips table")?
-		// 	.context("clip does not exist")?;
-
-		// let clip = Clip::decode(json.value())?;
 	}
 
 	pub fn get_clips(&self) -> Result<Vec<Clip>> {
