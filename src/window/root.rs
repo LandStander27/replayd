@@ -1662,11 +1662,6 @@ impl App {
 					.save_clip(Clip {
 						id: 0,
 						title: "Untitled".to_string(),
-						// title: relative_path
-						// 	.file_prefix()
-						// 	.context("could not get file prefix")?
-						// 	.to_string_lossy()
-						// 	.to_string(),
 						path: relative_path,
 						game,
 						duration_secs,
