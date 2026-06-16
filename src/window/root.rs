@@ -635,6 +635,11 @@ impl AsyncComponent for App {
 		};
 		info!("db init");
 
+		if let Err(e) = portals::register().await {
+			error!(?e);
+			error_dialog.show(format!("{e:#}"));
+		}
+
 		let listener = match Listener::bind(
 			sender.input_sender().clone(),
 			#[cfg(feature = "socket_commands")]
