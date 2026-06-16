@@ -1,4 +1,4 @@
-pub use crate::{args, audio, db, identifier, listener, log, portals, recorder, search, thumbnail, window};
+pub use crate::{args, audio, db, identifier, log, portals, recorder, search, socket, thumbnail, window};
 pub use adw::prelude::*;
 pub use async_trait::async_trait;
 pub use audio::AudioPlayer;
@@ -10,7 +10,6 @@ pub use color_eyre::{
 pub use db::{Clip, Codec, Container, Db, FrameRate, Game, ObjectId, Quality, Resolution, Settings};
 pub use gtk::{gdk, gio, glib};
 pub use identifier::{Window, WindowManager};
-pub use listener::Listener;
 pub use log::ShowError;
 pub use portals::open_dialog::OpenFileDialog;
 pub use portals::shortcuts::ShortcutsSession;
@@ -18,6 +17,7 @@ pub use recorder::Recorder;
 pub use relm4::abstractions::Toaster;
 pub use relm4::actions::*;
 pub use relm4::prelude::*;
+pub use socket::Listener;
 pub use std::cell::RefCell;
 pub use std::collections::{BTreeMap, HashMap};
 pub use std::fs::File;
