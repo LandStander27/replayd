@@ -44,6 +44,11 @@ fn main() -> Result<()> {
 		.join("replayd")
 		.join("socket.sock");
 
+	if !socket_path.exists() {
+		eprintln!("{socket_path:?} does not exist\nare you sure Replayd is running?");
+		std::process::exit(1);
+	}
+
 	let mut stream = UnixStream::connect(&socket_path).context("could not open stream")?;
 
 	match args.command {
