@@ -10,7 +10,7 @@ impl Listener {
 		let socket_path = dirs::runtime_dir()
 			.context("could not find XDG_RUNTIME_DIR")?
 			.join("replayd")
-			.join("hook.sock");
+			.join("socket.sock");
 
 		if socket_path.exists() {
 			std::fs::remove_file(&socket_path).context("could not delete socket file")?;
@@ -58,54 +58,12 @@ impl Listener {
 								}
 
 								#[cfg(feature = "socket_commands")]
-								{
-									use std::fmt::Write;
-									match buf.trim() {
-										"/db" => {
-											let mut s = String::new();
-											writeln!(
-												&mut s,
-												"schema version: {}\n",
-												db.schema_version()
-													.map(|x| format!("{x:#?}"))
-													.unwrap_or_else(|e| format!("Error: {e:#}"))
-											)
-											.unwrap();
-											writeln!(
-												&mut s,
-												"settings: {}\n",
-												db.read_settings()
-													.map(|x| format!("{x:#?}"))
-													.unwrap_or_else(|e| format!("Error: {e:#}"))
-											)
-											.unwrap();
-											writeln!(
-												&mut s,
-												"games: {}\n",
-												db.get_games()
-													.map(|x| format!("{x:#?}"))
-													.unwrap_or_else(|e| format!("Error: {e:#}"))
-											)
-											.unwrap();
-											writeln!(
-												&mut s,
-												"clips: {}",
-												db.get_clips()
-													.map(|x| format!("{x:#?}"))
-													.unwrap_or_else(|e| format!("Error: {e:#}"))
-											)
-											.unwrap();
-											stream.write_all(s.as_bytes()).await.unwrap();
-											return;
-										}
-										"/games" => {
-											stream
-												.write_all(format!("{:#?}\n", identifier::get_all_games()).as_bytes())
-												.await
-												.unwrap();
-											return;
-										}
-										_ => {}
+								match handle_command(&buf, &mut stream, db, &tx).await {
+									Ok(true) => return,
+									Ok(false) => {}
+									Err(e) => {
+										error!(?e);
+										tx.emit(Message::Error(format!("{e:#}")));
 									}
 								}
 
@@ -134,4 +92,41 @@ impl Listener {
 
 		return Ok(());
 	}
+}
+
+#[cfg(feature = "socket_commands")]
+async fn handle_command(buf: &str, stream: &mut UnixStream, db: Db, tx: &relm4::Sender<Message>) -> Result<bool> {
+	use std::fmt::Write;
+	match buf.trim() {
+		"get/db" => {
+			let mut s = String::new();
+			writeln!(
+				&mut s,
+				r#"
+schema version: {:#?}
+
+settings: {:#?}
+
+games: {:#?}
+
+clips: {:#?}
+"#,
+				db.schema_version()?,
+				db.read_settings()?,
+				db.get_games()?,
+				db.get_clips()?
+			)?;
+			stream.write_all(s.as_bytes()).await?;
+		}
+		"get/games" => {
+			stream
+				.write_all(format!("{:#?}\n", identifier::get_all_games()).as_bytes())
+				.await?;
+		}
+		"signal/clip" => tx.emit(Message::SaveClip),
+		"signal/toggle" => tx.emit(Message::ToggleClipping),
+		_ => return Ok(false),
+	}
+
+	return Ok(true);
 }

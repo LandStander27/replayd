@@ -20,7 +20,7 @@ fn main() -> Result<()> {
 	let socket_path = dirs::runtime_dir()
 		.context("could not find XDG_RUNTIME_DIR")?
 		.join("replayd")
-		.join("hook.sock");
+		.join("socket.sock");
 
 	let mut stream = UnixStream::connect(&socket_path).context("could not open stream")?;
 	stream
