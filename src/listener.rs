@@ -58,44 +58,55 @@ impl Listener {
 								}
 
 								#[cfg(feature = "socket_commands")]
-								if buf.trim() == "/db" {
+								{
 									use std::fmt::Write;
-									let mut s = String::new();
-									writeln!(
-										&mut s,
-										"schema version: {}\n",
-										db.schema_version()
-											.map(|x| format!("{x:#?}"))
-											.unwrap_or_else(|e| format!("Error: {e:#}"))
-									)
-									.unwrap();
-									writeln!(
-										&mut s,
-										"settings: {}\n",
-										db.read_settings()
-											.map(|x| format!("{x:#?}"))
-											.unwrap_or_else(|e| format!("Error: {e:#}"))
-									)
-									.unwrap();
-									writeln!(
-										&mut s,
-										"games: {}\n",
-										db.get_games()
-											.map(|x| format!("{x:#?}"))
-											.unwrap_or_else(|e| format!("Error: {e:#}"))
-									)
-									.unwrap();
-									writeln!(
-										&mut s,
-										"clips: {}\n",
-										db.get_clips()
-											.map(|x| format!("{x:#?}"))
-											.unwrap_or_else(|e| format!("Error: {e:#}"))
-									)
-									.unwrap();
-									stream.write_all(s.as_bytes()).await.unwrap();
-
-									return;
+									match buf.trim() {
+										"/db" => {
+											let mut s = String::new();
+											writeln!(
+												&mut s,
+												"schema version: {}\n",
+												db.schema_version()
+													.map(|x| format!("{x:#?}"))
+													.unwrap_or_else(|e| format!("Error: {e:#}"))
+											)
+											.unwrap();
+											writeln!(
+												&mut s,
+												"settings: {}\n",
+												db.read_settings()
+													.map(|x| format!("{x:#?}"))
+													.unwrap_or_else(|e| format!("Error: {e:#}"))
+											)
+											.unwrap();
+											writeln!(
+												&mut s,
+												"games: {}\n",
+												db.get_games()
+													.map(|x| format!("{x:#?}"))
+													.unwrap_or_else(|e| format!("Error: {e:#}"))
+											)
+											.unwrap();
+											writeln!(
+												&mut s,
+												"clips: {}",
+												db.get_clips()
+													.map(|x| format!("{x:#?}"))
+													.unwrap_or_else(|e| format!("Error: {e:#}"))
+											)
+											.unwrap();
+											stream.write_all(s.as_bytes()).await.unwrap();
+											return;
+										}
+										"/games" => {
+											stream
+												.write_all(format!("{:#?}\n", identifier::get_all_games()).as_bytes())
+												.await
+												.unwrap();
+											return;
+										}
+										_ => {}
+									}
 								}
 
 								tx.emit(Message::ClipReceived(PathBuf::from(buf)));

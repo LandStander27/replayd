@@ -33,6 +33,18 @@ impl WindowManager for Hyprland {
 			.context("could not read from hypr socket")?;
 
 		let window: serde_json::Value = serde_json::from_str(&json).context("could not parse json from hypr")?;
+		let pid = window["pid"].as_u64().context("no pid in window json")?;
+		let cmdline = PathBuf::from("/proc").join(format!("{pid}")).join("comm");
+		let mut cmdline: Vec<String> = std::fs::read_to_string(&cmdline)
+			.with_context(|| format!("could not read {cmdline:?}"))
+			.map(|x| x.split('\0').map(|x| x.to_string()).collect())
+			.show_error()
+			.unwrap_or_default();
+		let executable = if cmdline.is_empty() {
+			None
+		} else {
+			Some(cmdline.remove(0))
+		};
 
 		return Ok(Window {
 			class: window["class"]
@@ -46,7 +58,9 @@ impl WindowManager for Hyprland {
 			fullscreen: window["fullscreen"]
 				.as_i64()
 				.context("no fullscreen in window json")?
-				== 2,
+				>= 2,
+			executable,
+			cmdline,
 		});
 	}
 }

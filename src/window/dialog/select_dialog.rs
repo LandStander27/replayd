@@ -75,6 +75,13 @@ impl<T: IsA<gtk::Widget>> SimpleAsyncComponent for SelectDialog<T> {
 					dropdown -> gtk::DropDown {
 						set_vexpand: true,
 						set_valign: gtk::Align::Center,
+						set_enable_search: true,
+						set_search_match_mode: gtk::StringFilterMatchMode::Substring,
+						set_expression: Some(gtk::PropertyExpression::new(
+							gtk::StringObject::static_type(),
+							gtk::Expression::NONE,
+							"string",
+						)),
 					},
 				},
 

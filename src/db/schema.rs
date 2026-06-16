@@ -6,11 +6,11 @@ macro_rules! impl_serde {
 	($ty:ty) => {
 		impl $ty {
 			pub fn encode(&self) -> Result<Vec<u8>> {
-				return serde_json::to_vec(self).context("could not encode data");
+				return rmp_serde::to_vec(self).context("could not encode data");
 			}
 
 			pub fn decode(value: &[u8]) -> Result<$ty> {
-				return serde_json::from_slice(value).context("could not decode json");
+				return rmp_serde::from_slice(value).context("could not decode json");
 			}
 		}
 
@@ -60,7 +60,7 @@ impl Clip {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Game {
 	pub id: ObjectId,
-	pub window: Window,
+	pub game_id: ObjectId,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, Display)]
@@ -72,7 +72,7 @@ pub enum Resolution {
 	#[default]
 	P1080,
 
-	#[strum(to_string = "1080x720")]
+	#[strum(to_string = "1280x720")]
 	P720,
 }
 
@@ -136,7 +136,7 @@ pub enum FrameRate {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
-	pub buffer_length: i32,
+	pub buffer_length: u64,
 	pub codec: Codec,
 	pub resolution: Resolution,
 	pub container: Container,
@@ -162,7 +162,9 @@ impl Default for Settings {
 			output_dir: if cfg!(debug_assertions) {
 				std::env::current_dir().unwrap().join("clips")
 			} else {
-				format!("{}/Videos/Clips", std::env::var("HOME").unwrap()).into()
+				dirs::video_dir()
+					.unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join("Videos"))
+					.join("Clips")
 			},
 			show_end_title_buttons: true,
 			notifications: false,

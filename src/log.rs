@@ -2,6 +2,16 @@ use tracing_subscriber::layer::SubscriberExt;
 
 use crate::prelude::*;
 
+pub trait ShowError {
+	fn show_error(self) -> Self;
+}
+
+impl<T, E: std::fmt::Debug> ShowError for Result<T, E> {
+	fn show_error(self) -> Self {
+		return self.inspect_err(|e| error!(?e));
+	}
+}
+
 pub fn init() -> Result<()> {
 	let filter = tracing_subscriber::EnvFilter::builder()
 		.parse(if !args::args().verbose {

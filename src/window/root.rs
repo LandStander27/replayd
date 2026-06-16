@@ -34,7 +34,6 @@ struct App {
 	delete_db_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
 	input_dialog: AsyncController<InputDialog<adw::ApplicationWindow>>,
 	select_game_dialog: AsyncController<SelectDialog<adw::ApplicationWindow>>,
-	game_id_list: Vec<Option<ObjectId>>,
 	relevant_clip: Option<ObjectId>,
 	deleting_clips: Vec<ObjectId>,
 	renaming_clip: ObjectId,
@@ -62,9 +61,10 @@ pub enum Message {
 	Init,
 	Error(String),
 	LoadClips,
+	LoadGames,
 	SearchChanged(String),
 	Search(String),
-	GamesLoaded(Vec<db::Game>),
+	// GamesLoaded(Vec<db::Game>),
 	GameSelected(DynamicIndex),
 	GameDeselected,
 	ClipReceived(PathBuf),
@@ -327,7 +327,7 @@ impl AsyncComponent for App {
 							set_value: app.settings.buffer_length as f64,
 
 							connect_changed[db, sender] => move |x| {
-								let value = x.value() as i32;
+								let value = x.value() as u64;
 								if let Err(e) = db.write_settings(|s| s.buffer_length = value) {
 									error!(?e);
 									sender.input(Message::Error(format!("{e:#}")));
@@ -763,7 +763,6 @@ impl AsyncComponent for App {
 			renaming_clip: 0,
 			audio_player,
 			relevant_clip: None,
-			game_id_list: vec![],
 			main_stack: gtk::Stack::default(),
 			search_debounce: None,
 		};
@@ -996,9 +995,9 @@ impl App {
 				title.set_label(&clip.title);
 				let game = if let Some(game) = clip.game
 					&& let Ok(game) = db.get_game(game)
-					&& let Some(game) = identifier::identify_game(&game.window).map(|x| x.name)
+					&& let Some(game) = identifier::get_game(game.game_id)
 				{
-					Some(game)
+					Some(game.name.clone())
 				} else {
 					None
 				};
@@ -1166,6 +1165,36 @@ impl App {
 		return Ok(());
 	}
 
+	fn delete_old_games(db: Db, tx: relm4::Sender<Message>) -> Result<()> {
+		let clips = db.get_clips()?;
+		let mut clips_per_games: HashMap<ObjectId, u64> = HashMap::new();
+		let games = db.get_games()?;
+		for game in &games {
+			clips_per_games.insert(game.id, 0);
+		}
+		for clip in &clips {
+			if let Some(game) = clip.game {
+				*clips_per_games.entry(game).or_default() += 1;
+			}
+		}
+
+		let mut deleted_game = false;
+		for game in clips_per_games
+			.iter()
+			.filter_map(|(&x, &y)| if y == 0 { Some(x) } else { None })
+		{
+			deleted_game = true;
+			db.delete_game(game)?;
+		}
+
+		if deleted_game {
+			drop(games);
+			tx.emit(Message::LoadGames);
+		}
+
+		return Ok(());
+	}
+
 	#[tracing::instrument(skip(self, msg, sender))]
 	async fn update(&mut self, msg: Message, sender: AsyncComponentSender<Self>) -> Result<()> {
 		info!("update");
@@ -1173,28 +1202,35 @@ impl App {
 		match msg {
 			Message::Void => {}
 			Message::SelectGame(id) => {
-				let games = self.db.get_games()?;
+				let games = identifier::get_all_games();
 				self.relevant_clip = Some(id);
-				self.game_id_list = std::iter::once(None)
-					.chain(games.iter().map(|g| Some(g.id)))
-					.collect();
+				// self.game_id_list = std::iter::once(None)
+				// 	.chain(games.iter().map(|g| Some(g.id)))
+				// 	.collect();
 
-				let mut options = vec!["None".to_string()];
-				for game in games {
-					let name = identifier::identify_game(&game.window)
-						.map(|x| x.name)
-						.unwrap_or_else(|| game.window.class);
-					options.push(name);
-				}
+				let options = std::iter::once("None".to_string())
+					.chain(games.iter().map(|x| x.name.clone()))
+					.collect();
 
 				self.select_game_dialog
 					.emit(SelectDialogMessage::Show(options));
 			}
 			Message::SelectGameConfirm(index) => {
-				let game_id_list = std::mem::take(&mut self.game_id_list);
-				let game_id = game_id_list.get(index as usize).copied().flatten();
+				let game_id = if index == 0 {
+					None
+				} else {
+					let game_id = index - 1;
+					if let Some(existing) = self.db.get_games()?.iter().find(|x| x.game_id == game_id) {
+						Some(existing.id)
+					} else {
+						let id = self.db.add_game(Game { id: 0, game_id })?;
+						tx.emit(Message::LoadGames);
+						Some(id)
+					}
+				};
 				let clip = self.relevant_clip.take().unwrap();
 				self.db.set_clip_game(clip, game_id)?;
+				App::delete_old_games(self.db.clone(), tx.clone())?;
 				tx.emit(Message::LoadClips);
 			}
 			Message::SearchChanged(query) => {
@@ -1222,8 +1258,6 @@ impl App {
 				let mut scores = self.clips_data.scores.write().map_err(|x| eyre!("{x}"))?;
 				scores.clear();
 				self.games.guard().send(0, true);
-				self.selected_game = None;
-				self.apply_game_filter();
 				if !query.is_empty() {
 					let mut searcher = search::Searcher::new();
 					for i in 0..self.clips_data.store.n_items() {
@@ -1261,9 +1295,7 @@ impl App {
 					}
 				} else {
 					drop(scores);
-					// self.clips_data.filter.set_filter_func(|_| true);
-					self.games.guard().send(0, true);
-					self.selected_game = None;
+					self.apply_game_filter();
 				}
 
 				self.apply_sort();
@@ -1355,7 +1387,7 @@ impl App {
 				let library = self.settings.output_dir.clone();
 				let tx = tx.clone();
 				sender.oneshot_command(async move {
-					let mut clips = match db.get_clips() {
+					let clips = match db.get_clips() {
 						Ok(o) => o,
 						Err(e) => {
 							error!(?e);
@@ -1379,49 +1411,11 @@ impl App {
 							error!(?e);
 							return Message::Error(format!("{e:#}"));
 						}
-
-						clips.remove(i);
 					}
 
-					let mut clips_per_games: HashMap<ObjectId, u64> = HashMap::new();
-					let games = match db.get_games() {
-						Ok(o) => o,
-						Err(e) => {
-							error!(?e);
-							return Message::Error(format!("{e:#}"));
-						}
-					};
-					for game in &games {
-						clips_per_games.insert(game.id, 0);
-					}
-					for clip in &clips {
-						if let Some(game) = clip.game {
-							*clips_per_games.entry(game).or_default() += 1;
-						}
-					}
-
-					let mut deleted_game = false;
-					for game in clips_per_games
-						.iter()
-						.filter_map(|(&x, &y)| if y == 0 { Some(x) } else { None })
-					{
-						deleted_game = true;
-						if let Err(e) = db.delete_game(game) {
-							error!(?e);
-							return Message::Error(format!("{e:#}"));
-						}
-					}
-
-					if deleted_game {
-						drop(games);
-						let games = match db.get_games() {
-							Ok(o) => o,
-							Err(e) => {
-								error!(?e);
-								return Message::Error(format!("{e:#}"));
-							}
-						};
-						tx.emit(Message::GamesLoaded(games));
+					if let Err(e) = Self::delete_old_games(db, tx) {
+						error!(?e);
+						return Message::Error(format!("{e:#}"));
 					}
 
 					return Message::LoadClips;
@@ -1515,7 +1509,8 @@ impl App {
 					tx.emit(Message::Error(format!("{e:#}")));
 				}
 
-				tx.emit(Message::GamesLoaded(self.db.get_games()?));
+				App::delete_old_games(self.db.clone(), tx.clone())?;
+				tx.emit(Message::LoadGames);
 				info!("loading clips");
 				tx.emit(Message::LoadClips);
 			}
@@ -1539,16 +1534,17 @@ impl App {
 
 				self.clips_data.filter.changed(gtk::FilterChange::Different);
 			}
-			Message::GamesLoaded(games) => {
+			Message::LoadGames => {
+				let games = self.db.get_games()?;
 				let mut guard = self.games.guard();
 				guard.clear();
 				guard.push_back((0, "All games".to_string()));
 				for game in games {
 					guard.push_back((
 						game.id,
-						identifier::identify_game(&game.window)
-							.map(|x| x.name)
-							.unwrap_or(game.window.class),
+						identifier::get_game(game.game_id)
+							.map(|x| x.name.clone())
+							.context("could not get game name")?,
 					));
 				}
 				guard.send(0, true);
@@ -1627,14 +1623,19 @@ impl App {
 					.to_path_buf();
 
 				let game = if window.fullscreen {
-					let games = self.db.get_games()?;
-					if let Some(game) = games.iter().find(|x| x.window == window) {
-						Some(game.id)
-					} else {
-						let id = self.db.add_game(Game { id: 0, window })?;
-						tx.emit(Message::GamesLoaded(self.db.get_games()?)); // TODO: should just append game, instead of loading all games again
-						Some(id)
-					}
+					identifier::identify_game(&window)
+						.map(|game_id| {
+							let games = self.db.get_games()?;
+
+							if let Some(existing) = games.iter().find(|g| g.game_id == game_id) {
+								Ok(existing.id)
+							} else {
+								let id = self.db.add_game(Game { id: 0, game_id });
+								tx.emit(Message::LoadGames);
+								return id;
+							}
+						})
+						.transpose()?
 				} else {
 					None
 				};
@@ -1644,9 +1645,9 @@ impl App {
 					move || thumbnail::get_duration(&path)
 				})
 				.await
-				.inspect_err(|e| error!(?e))
+				.show_error()
 				.inspect(|x| {
-					_ = x.as_ref().inspect_err(|e| error!(?e));
+					_ = x.as_ref().show_error();
 				})
 				.map(|x| x.ok())
 				.ok()

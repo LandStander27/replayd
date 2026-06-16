@@ -8,10 +8,26 @@ mod hypr;
 static IDENTIFIABLE_GAMES: OnceCell<Vec<IdentifiableGame>> = OnceCell::const_new();
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct Executable {
+	pub binary: String,
+
+	#[serde(default)]
+	pub arguments: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct IdentifiableGame {
-	pub class: String,
-	pub title_substring: String,
+	pub id: u64,
 	pub name: String,
+
+	#[serde(default)]
+	pub classes: Vec<String>,
+
+	#[serde(default)]
+	pub title_substring: Option<String>,
+
+	#[serde(default)]
+	pub executables: Vec<Executable>,
 }
 
 pub async fn get_games() -> Result<()> {
@@ -29,7 +45,7 @@ pub async fn get_games() -> Result<()> {
 		.await
 		.context("could not get text from request")?
 		.lines()
-		.filter(|x| !x.starts_with("//"))
+		.filter(|x| !x.starts_with("//")) // why does json not support comments !!!!!!!
 		.collect();
 	let parsed: Vec<IdentifiableGame> = serde_json::from_str(&json).context("could not parse json from request")?;
 
@@ -40,7 +56,16 @@ pub async fn get_games() -> Result<()> {
 	return Ok(());
 }
 
-pub fn identify_game(window: &Window) -> Option<IdentifiableGame> {
+pub fn get_game(id: ObjectId) -> Option<&'static IdentifiableGame> {
+	return IDENTIFIABLE_GAMES.get().and_then(|x| x.get(id as usize));
+}
+
+#[cfg(feature = "socket_commands")]
+pub fn get_all_games() -> &'static Vec<IdentifiableGame> {
+	return IDENTIFIABLE_GAMES.get().unwrap();
+}
+
+pub fn identify_game(window: &Window) -> Option<ObjectId> {
 	let games = if IDENTIFIABLE_GAMES.initialized() {
 		IDENTIFIABLE_GAMES.get().unwrap()
 	} else {
@@ -49,14 +74,45 @@ pub fn identify_game(window: &Window) -> Option<IdentifiableGame> {
 
 	return games
 		.iter()
-		.find(|x| x.class == window.class && window.title.contains(&x.title_substring))
-		.cloned();
+		.find(|game| {
+			let args = window.cmdline.join(" ");
+			if !game.executables.is_empty()
+				&& let Some(ref exe) = window.executable
+			{
+				let exe_matches = game.executables.iter().any(|e| {
+					if e.binary != *exe {
+						return false;
+					}
+
+					e.arguments.iter().all(|arg| args.contains(arg.as_str()))
+				});
+
+				if exe_matches {
+					return true;
+				}
+			}
+
+			if !game.classes.is_empty() {
+				let class_matches = game.classes.iter().any(|c| c == &window.class);
+				if class_matches {
+					return match &game.title_substring {
+						Some(sub) => window.title.contains(sub.as_str()),
+						None => return true,
+					};
+				}
+			}
+
+			return false;
+		})
+		.map(|x| x.id);
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Window {
 	pub class: String,
 	pub title: String,
+	pub executable: Option<String>,
+	pub cmdline: Vec<String>,
 	pub fullscreen: bool,
 }
 
@@ -81,6 +137,8 @@ pub fn get_window_manager() -> Result<Box<dyn WindowManager>> {
 			.as_str()
 		{
 			"Hyprland" => Box::new(hypr::Hyprland),
+			"KDE" => todo!("will have to use kdotool"),
+			"GNOME" => todo!("will have to write a gnome extension that opens a socket or something "),
 			s => {
 				return Err(eyre!("{s} is unknown")); // TODO: add more
 			}

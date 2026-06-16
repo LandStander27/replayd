@@ -11,6 +11,7 @@ pub use db::{Clip, Codec, Container, Db, FrameRate, Game, ObjectId, Quality, Res
 pub use gtk::{gdk, gio, glib};
 pub use identifier::{Window, WindowManager};
 pub use listener::Listener;
+pub use log::ShowError;
 pub use portals::open_dialog::OpenFileDialog;
 pub use portals::shortcuts::ShortcutsSession;
 pub use recorder::Recorder;
