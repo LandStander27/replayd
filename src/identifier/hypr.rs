@@ -34,16 +34,20 @@ impl WindowManager for Hyprland {
 
 		let window: serde_json::Value = serde_json::from_str(&json).context("could not parse json from hypr")?;
 		let pid = window["pid"].as_u64().context("no pid in window json")?;
-		let cmdline = PathBuf::from("/proc").join(format!("{pid}")).join("comm");
+		let cmdline = PathBuf::from("/proc")
+			.join(format!("{pid}"))
+			.join("cmdline");
 		let mut cmdline: Vec<String> = std::fs::read_to_string(&cmdline)
 			.with_context(|| format!("could not read {cmdline:?}"))
-			.map(|x| x.split('\0').map(|x| x.to_string()).collect())
+			.map(|x| x.split('\0').map(|x| x.trim().to_string()).collect())
 			.show_error()
 			.unwrap_or_default();
 		let executable = if cmdline.is_empty() {
 			None
 		} else {
-			Some(cmdline.remove(0))
+			PathBuf::from(cmdline.remove(0))
+				.file_name()
+				.map(|x| x.to_string_lossy().to_string())
 		};
 
 		return Ok(Window {

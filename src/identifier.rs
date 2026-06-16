@@ -84,7 +84,7 @@ pub fn identify_game(window: &Window) -> Option<ObjectId> {
 						return false;
 					}
 
-					e.arguments.iter().all(|arg| args.contains(arg.as_str()))
+					e.arguments.iter().all(|arg| args.contains(arg))
 				});
 
 				if exe_matches {
