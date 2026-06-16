@@ -86,7 +86,7 @@ impl Listener {
 			dirs::runtime_dir()
 				.context("could not find XDG_RUNTIME_DIR")?
 				.join("replayd")
-				.join("hook.sock"),
+				.join("socket.sock"),
 		)
 		.context("could not delete socket file")?;
 

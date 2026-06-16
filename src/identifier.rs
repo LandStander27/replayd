@@ -60,7 +60,6 @@ pub fn get_game(id: ObjectId) -> Option<&'static IdentifiableGame> {
 	return IDENTIFIABLE_GAMES.get().and_then(|x| x.get(id as usize));
 }
 
-#[cfg(feature = "socket_commands")]
 pub fn get_all_games() -> &'static Vec<IdentifiableGame> {
 	return IDENTIFIABLE_GAMES.get().unwrap();
 }

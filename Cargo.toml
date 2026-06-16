@@ -8,6 +8,10 @@ default-run = "replayd"
 name = "replayd-hook"
 path = "src/bin/hook.rs"
 
+[[bin]]
+name = "replaydctl"
+path = "src/bin/ctl.rs"
+
 [features]
 default = []
 socket_commands = []
