@@ -1153,16 +1153,64 @@ impl App {
 				for cmd in &actions {
 					let action_name = format!("custom-{}", cmd.id);
 					let action = gio::SimpleAction::new(&action_name, None);
-					let cmd = cmd.clone();
-					let path = clip.absolute_path(&library);
-					action.connect_activate(move |_, _| {
-						std::process::Command::new("sh")
-							.arg("-c")
-							.arg(&cmd.command)
-							.env("REPLAYD_CLIP_PATH", path.display().to_string())
-							.stdin(Stdio::null())
-							.spawn()
-							.ok();
+					action.connect_activate({
+						let cmd = cmd.clone();
+						let clip = clip.clone();
+						let path = clip.absolute_path(&library);
+						let sender = sender.clone();
+						move |_, _| {
+							let cmd = cmd.clone();
+							let clip = clip.clone();
+							let path = path.clone();
+							let sender = sender.clone();
+							tokio::spawn(async move {
+								let Ok(mut proc) = Command::new("sh")
+									.arg("-c")
+									.arg(&cmd.command)
+									.env("REPLAYD_CLIP_PATH", path.display().to_string())
+									.env("REPLAYD_CLIP_TITLE", &clip.title)
+									.stdin(Stdio::null())
+									.spawn()
+									.context("could not spawn custom action")
+									.show_error()
+									.emit_error(&sender)
+								else {
+									return;
+								};
+
+								let Ok(status) = proc
+									.wait()
+									.await
+									.context("could not wait for process to end")
+									.show_error()
+									.emit_error(&sender)
+								else {
+									return;
+								};
+
+								if !status.success() {
+									if let Some(code) = status.code() {
+										sender.emit(Message::Error(format!("Custom action `{}` returned non-zero exit-code {code}", cmd.name)));
+									} else if status.core_dumped() {
+										sender.emit(Message::Error(format!("Custom action `{}` core dumped", cmd.name)));
+									} else if let Some(signal) = status.signal() {
+										if let Ok(signal) = nix::sys::signal::Signal::try_from(signal) {
+											sender.emit(Message::Error(format!("Custom action `{}` was terminated from a {signal}", cmd.name)));
+										} else {
+											sender.emit(Message::Error(format!("Custom action `{}` was terminated", cmd.name)));
+										}
+									} else if let Some(signal) = status.stopped_signal() {
+										if let Ok(signal) = nix::sys::signal::Signal::try_from(signal) {
+											sender.emit(Message::Error(format!("Custom action `{}` was stopped from a {signal}", cmd.name)));
+										} else {
+											sender.emit(Message::Error(format!("Custom action `{}` was stopped", cmd.name)));
+										}
+									} else {
+										sender.emit(Message::Error(format!("Custom action `{}` failed for an unknown reason", cmd.name)));
+									}
+								}
+							});
+						}
 					});
 					group.add_action(&action);
 				}
@@ -1371,7 +1419,7 @@ impl App {
 						present: Some(&self.window),
 						inline_css: "border-bottom-left-radius: 13px",
 						inline_css: "border-bottom-right-radius: 13px",
-						set_content_width: 360,
+						set_content_width: 480,
 
 						set_title: "Custom Action",
 
@@ -1401,6 +1449,23 @@ impl App {
 										set_text: &action.command,
 										set_placeholder_text: Some("Shell command"),
 										set_activates_default: true,
+									},
+
+									gtk::Label {
+										set_markup:
+r#"
+
+Your command will be ran like this: <tt>sh -c '%COMMAND%'</tt>.
+These environment variables are available:
+• <tt>REPLAYD_CLIP_PATH</tt>: The full, absolute path to the clip.
+• <tt>REPLAYD_CLIP_TITLE</tt>: The title given to the clip.
+
+Note: You must restart Replayd to apply the changes.
+
+"#.trim(),
+										set_wrap: true,
+										set_halign: gtk::Align::Start,
+										set_justify: gtk::Justification::Left,
 									},
 								},
 

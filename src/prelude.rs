@@ -23,6 +23,7 @@ pub use std::cell::RefCell;
 pub use std::collections::{BTreeMap, HashMap};
 pub use std::fs::File;
 pub use std::os::unix::fs::MetadataExt;
+pub use std::os::unix::process::ExitStatusExt;
 pub use std::path::{Path, PathBuf};
 pub use std::process::Stdio;
 pub use std::rc::Rc;

@@ -4,11 +4,16 @@ use crate::prelude::*;
 
 pub trait ShowError {
 	fn show_error(self) -> Self;
+	fn emit_error(self, tx: &relm4::Sender<Message>) -> Self;
 }
 
-impl<T, E: std::fmt::Debug> ShowError for Result<T, E> {
+impl<T, E: std::fmt::Debug + std::fmt::Display> ShowError for Result<T, E> {
 	fn show_error(self) -> Self {
 		return self.inspect_err(|e| error!(?e));
+	}
+
+	fn emit_error(self, tx: &relm4::Sender<Message>) -> Self {
+		return self.inspect_err(|e| tx.emit(Message::Error(format!("{e:#}"))));
 	}
 }
 
