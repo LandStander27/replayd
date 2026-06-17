@@ -1,0 +1,28 @@
+.play-overlay {
+	background: rgba(0, 0, 0, 0.55);
+	color: white;
+
+	min-width: 64px;
+	min-height: 64px;
+
+	padding: 0;
+}
+
+.play-overlay:hover {
+	background: rgba(0, 0, 0, 0.7);
+}
+
+.play-overlay:active {
+	background: rgba(0, 0, 0, 0.85);
+}
+
+.play-overlay image {
+	-gtk-icon-size: 32px;
+}
+
+.duration-overlay {
+	background: rgba(0, 0, 0, 0.6);
+	border-radius: 4px;
+	padding: 2px 5px;
+	color: white;
+}

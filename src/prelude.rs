@@ -9,6 +9,7 @@ pub use color_eyre::{
 };
 pub use db::{Clip, Codec, Container, Db, FrameRate, Game, ObjectId, Quality, Resolution, Settings};
 pub use gtk::{gdk, gio, glib};
+pub use identifier::IdentifiableGame;
 pub use identifier::{Window, WindowManager};
 pub use log::ShowError;
 pub use portals::open_dialog::OpenFileDialog;
@@ -21,6 +22,7 @@ pub use socket::Listener;
 pub use std::cell::RefCell;
 pub use std::collections::{BTreeMap, HashMap};
 pub use std::fs::File;
+pub use std::os::unix::fs::MetadataExt;
 pub use std::path::{Path, PathBuf};
 pub use std::process::Stdio;
 pub use std::rc::Rc;
@@ -28,6 +30,7 @@ pub use std::sync::{
 	Arc, RwLock,
 	atomic::{AtomicBool, Ordering},
 };
+pub use strum::{EnumProperty, IntoEnumIterator};
 pub use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub use tokio::net::{UnixListener, UnixStream};
 pub use tokio::process::{Child, Command};
@@ -37,7 +40,7 @@ pub use tokio::task::JoinHandle;
 pub use tracing::{debug, error, info, trace, warn};
 pub use window::dialog::{
 	ConfirmDialog, ConfirmDialogMessage, ConfirmDialogResponse, ConfirmDialogSettings, ErrorDialog, InputDialog, InputDialogMessage, InputDialogResponse, InputDialogSettings,
-	SelectDialog, SelectDialogMessage, SelectDialogResponse, SelectDialogSettings,
+	PropertiesDialog, PropertiesDialogMessage, PropertiesDialogSettings, SelectDialog, SelectDialogMessage, SelectDialogResponse, SelectDialogSettings,
 };
 pub use window::root::Message;
 pub use window::tray::Tray;

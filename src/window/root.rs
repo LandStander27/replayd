@@ -32,9 +32,9 @@ struct App {
 	delete_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
 	delete_db_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
 	input_dialog: AsyncController<InputDialog<adw::ApplicationWindow>>,
+	properties_dialog: AsyncController<PropertiesDialog<adw::ApplicationWindow>>,
 	select_game_dialog: AsyncController<SelectDialog<adw::ApplicationWindow>>,
 	selected_game: Option<ObjectId>,
-	// relevant_clips: Vec<ObjectId>,
 	audio_player: Option<AudioPlayer>,
 	main_stack: gtk::Stack,
 	search_debounce: Option<glib::SourceId>,
@@ -77,7 +77,9 @@ pub enum Message {
 	RenameClips,
 	RenameClipsConfirm(String),
 	OpenClipFolder,
+	OpenClipId(ObjectId),
 	OpenClips,
+	OpenClipProperties,
 	SelectGame,
 	SelectGameConfirm(ObjectId),
 	F2Pressed,
@@ -88,6 +90,7 @@ pub enum Message {
 
 relm4::new_action_group!(ClipActionGroup, "clip");
 relm4::new_stateless_action!(ClipOpen, ClipActionGroup, "open");
+relm4::new_stateless_action!(ClipOpenProperties, ClipActionGroup, "properties");
 relm4::new_stateless_action!(ClipOpenFolder, ClipActionGroup, "open-folder");
 relm4::new_stateless_action!(ClipRename, ClipActionGroup, "rename");
 relm4::new_stateless_action!(ClipSelectGame, ClipActionGroup, "select-game");
@@ -194,7 +197,7 @@ impl AsyncComponent for App {
 
 						gtk::Label {
 							#[watch]
-							set_label: &format!("{}p · {} fps · {}", app.settings.resolution, app.settings.frame_rate, app.settings.codec),
+							set_label: &format!("{}p · {} fps · {}", app.settings.resolution.get_str("display").unwrap(), app.settings.frame_rate.get_str("display").unwrap(), app.settings.codec.get_str("display").unwrap()),
 							set_halign: gtk::Align::Start,
 							add_css_class: "caption",
 							add_css_class: "dim-label",
@@ -259,6 +262,7 @@ impl AsyncComponent for App {
 						set_margin_end: 12,
 						set_margin_bottom: 12,
 
+						#[name(clip_grid)]
 						gtk::GridView {
 							set_model: Some(&clips_data.selection),
 							set_factory: Some(&clips_data.factory),
@@ -267,6 +271,18 @@ impl AsyncComponent for App {
 							set_single_click_activate: false,
 
 							connect_activate[sender] => move |_, _| sender.input(Message::OpenClips),
+
+							add_controller = gtk::GestureClick {
+								set_button: 1,
+								connect_pressed[clip_grid, selection = clips_data.selection] => move |gesture, _, x, y| {
+									let picked = clip_grid.pick(x, y, gtk::PickFlags::DEFAULT);
+
+									if picked.as_ref() == Some(clip_grid.upcast_ref()) {
+										gesture.set_state(gtk::EventSequenceState::Claimed);
+										selection.unselect_all();
+									}
+								}
+							},
 
 							add_controller = gtk::EventControllerKey {
 								connect_key_pressed[sender] => move |_, key, _, _| {
@@ -352,7 +368,7 @@ impl AsyncComponent for App {
 
 						adw::ComboRow {
 							set_title: "Quality",
-							set_model: Some(&gtk::StringList::new(&["Medium", "High", "Very high", "Ultra"])),
+							set_model: Some(&gtk::StringList::new(Quality::iter().map(|x| x.get_str("display").unwrap()).collect::<Vec<&str>>().as_slice())),
 							set_selected: app.settings.quality as u32,
 							connect_selected_notify[db, sender] => move |x| {
 								let value = x.selected() as usize;
@@ -367,7 +383,7 @@ impl AsyncComponent for App {
 
 						adw::ComboRow {
 							set_title: "Encoder",
-							set_model: Some(&gtk::StringList::new(&["H.264", "AV1", "HEVC"])),
+							set_model: Some(&gtk::StringList::new(Codec::iter().map(|x| x.get_str("display").unwrap()).collect::<Vec<&str>>().as_slice())),
 							set_selected: app.settings.codec as u32,
 							connect_selected_notify[db, sender] => move |x| {
 								let value = x.selected() as usize;
@@ -382,7 +398,7 @@ impl AsyncComponent for App {
 
 						adw::ComboRow {
 							set_title: "Container",
-							set_model: Some(&gtk::StringList::new(&["mp4", "mkv"])),
+							set_model: Some(&gtk::StringList::new(Container::iter().map(|x| x.get_str("display").unwrap()).collect::<Vec<&str>>().as_slice())),
 							set_selected: app.settings.container as u32,
 							connect_selected_notify[db, sender] => move |x| {
 								let value = x.selected() as usize;
@@ -397,7 +413,7 @@ impl AsyncComponent for App {
 
 						adw::ComboRow {
 							set_title: "Resolution",
-							set_model: Some(&gtk::StringList::new(&["1440p", "1080p", "720p"])),
+							set_model: Some(&gtk::StringList::new(Resolution::iter().map(|x| x.get_str("display").unwrap()).collect::<Vec<&str>>().as_slice())),
 							set_selected: app.settings.resolution as u32,
 							connect_selected_notify[db, sender] => move |x| {
 								let value = x.selected() as usize;
@@ -412,7 +428,7 @@ impl AsyncComponent for App {
 
 						adw::ComboRow {
 							set_title: "Frame rate",
-							set_model: Some(&gtk::StringList::new(&["24 fps", "30 fps", "60 fps", "120 fps", "144 fps"])),
+							set_model: Some(&gtk::StringList::new(FrameRate::iter().map(|x| x.get_str("display").unwrap()).collect::<Vec<&str>>().as_slice())),
 							set_selected: app.settings.frame_rate as u32,
 							connect_selected_notify[db, sender] => move |x| {
 								let value = x.selected() as usize;
@@ -729,6 +745,12 @@ impl AsyncComponent for App {
 					SelectDialogResponse::Confirm(id) => Message::SelectGameConfirm(id),
 					_ => Message::Void,
 				}),
+			properties_dialog: PropertiesDialog::builder()
+				.launch(PropertiesDialogSettings {
+					window: root.clone(),
+					close_label: "Close".to_string(),
+				})
+				.forward(sender.input_sender(), |x| x),
 			visible: !args::args().open_minimized,
 			tray: match Tray::new(sender.input_sender().clone()).spawn().await {
 				Ok(o) => o,
@@ -756,7 +778,6 @@ impl AsyncComponent for App {
 			user_overrode_sort: false,
 			selected_game: None,
 			audio_player,
-			// relevant_clips: Vec::new(),
 			main_stack: gtk::Stack::default(),
 			search_debounce: None,
 		};
@@ -812,31 +833,53 @@ impl AsyncComponent for App {
 	}
 }
 
-fn format_duration(secs: u64) -> String {
+pub(super) fn format_duration(secs: u64, long: bool) -> String {
 	let h = secs / 3600;
 	let m = (secs % 3600) / 60;
 	let s = secs % 60;
-	if h > 0 {
-		return format!("{h}:{m:02}:{s:02}");
+	if long {
+		if h > 0 {
+			return format!("{h}:{m:02}:{s:02}");
+		} else if m > 0 {
+			return format!("{m:02}:{s:02}");
+		} else if s == 1 {
+			return "1 second".to_string();
+		} else {
+			return format!("{s} seconds");
+		}
 	} else {
-		return format!("{m}:{s:02}");
+		if h > 0 {
+			return format!("{h}:{m:02}:{s:02}");
+		} else if m > 0 {
+			return format!("{m}:{s:02}");
+		} else {
+			return format!("{s}s");
+		}
 	}
 }
 
-fn format_date(timestamp: u64) -> String {
+pub(super) fn format_date(timestamp: u64, long: bool) -> String {
 	let dt: DateTime<Local> = DateTime::from_timestamp_secs(timestamp as i64)
 		.unwrap()
 		.with_timezone(&Local);
-	let now = Local::now();
-	let today = now.date_naive();
-	let clip_day = dt.date_naive();
-
-	if clip_day == today {
-		format!("Today at {}", dt.format("%l:%M %p").to_string().trim())
-	} else if clip_day == today.pred_opt().unwrap() {
-		format!("Yesterday at {}", dt.format("%l:%M %p").to_string().trim())
+	if long {
+		return dt.format("%b %d, %Y, %-l:%M:%S %p").to_string();
 	} else {
-		return format!("{} at {}", dt.format("%b %d %Y"), dt.format("%l:%M %p").to_string().trim());
+		let now = Local::now();
+		let today = now.date_naive();
+		let clip_day = dt.date_naive();
+
+		if clip_day == today {
+			format!("Today at {}", dt.format("%-l:%M %p"))
+		} else if clip_day == today.pred_opt().unwrap() {
+			format!("Yesterday at {}", dt.format("%-l:%M %p"))
+		} else {
+			if clip_day.year() == today.year() {
+				return dt.format("%b %d at %-l:%M %p").to_string();
+			} else {
+				return dt.format("%b %d %Y at %-l:%M %p").to_string();
+			}
+		}
 	}
 }
 
@@ -862,6 +905,11 @@ impl App {
 				let item = item.downcast_ref::<gtk::ListItem>().unwrap();
 
 				relm4::view! {
+					#[name(bottom_section)]
+					gio::Menu {
+						append: (Some("Properties"), Some(&ClipOpenProperties::action_name())),
+					},
+
 					#[name(danger_section)]
 					gio::Menu {
 						append: (Some("Delete"), Some(&ClipDelete::action_name())),
@@ -874,6 +922,7 @@ impl App {
 						append: (Some("Select game"), Some(&ClipSelectGame::action_name())),
 						append: (Some("Show in Files"), Some(&ClipOpenFolder::action_name())),
 						append_section: (None, &danger_section),
+						append_section: (None, &bottom_section),
 					},
 
 					#[name(popover)]
@@ -894,7 +943,7 @@ impl App {
 								set_margin_end: 6,
 								set_margin_bottom: 6,
 								add_css_class: "caption",
-								inline_css: "background: rgba(0,0,0,0.6); border-radius: 4px; padding: 2px 5px; color: white;",
+								add_css_class: "duration-overlay",
 							},
 
 							gtk::Stack {
@@ -978,7 +1027,7 @@ impl App {
 					.unwrap();
 
 				if let Some(secs) = clip.duration_secs {
-					duration_label.set_label(&format_duration(secs));
+					duration_label.set_label(&format_duration(secs, false));
 					duration_label.set_visible(true);
 				} else {
 					duration_label.set_visible(false);
@@ -999,9 +1048,9 @@ impl App {
 				};
 
 				if let Some(game) = game {
-					meta.set_label(&format!("{} · {}", format_date(clip.created), game));
+					meta.set_label(&format!("{} · {}", format_date(clip.created, false), game));
 				} else {
-					meta.set_label(&format_date(clip.created));
+					meta.set_label(&format_date(clip.created, false));
 				}
 
 				relm4::spawn_local({
@@ -1042,6 +1091,10 @@ impl App {
 				group.add_action(RelmAction::<ClipSelectGame>::new_stateless({
 					let sender = sender.clone();
 					move |_| sender.emit(Message::SelectGame)
+				}));
+				group.add_action(RelmAction::<ClipOpenProperties>::new_stateless({
+					let sender = sender.clone();
+					move |_| sender.emit(Message::OpenClipProperties)
 				}));
 				group.add_action(RelmAction::<ClipRename>::new_stateless({
 					let sender = sender.clone();
@@ -1214,10 +1267,48 @@ impl App {
 
 	#[tracing::instrument(skip(self, msg, sender))]
 	async fn update(&mut self, msg: Message, sender: AsyncComponentSender<Self>) -> Result<()> {
-		info!("update");
 		let tx = sender.input_sender();
 		match msg {
 			Message::Void => {}
+			Message::OpenClipProperties => {
+				let id = self.get_selected_clips()[0];
+				self.clips_data.selection.unselect_all();
+				let clip = self.db.get_clip(id)?;
+				let thumbnail = thumbnail::extract(&clip, &self.settings.output_dir)?;
+				let game = if let Some(id) = clip.game {
+					let game = self.db.get_game(id)?;
+					Some(
+						identifier::get_game(game.game_id)
+							.context("unknown game")?
+							.name
+							.clone(),
+					)
+				} else {
+					None
+				};
+
+				let path = clip.absolute_path(&self.settings.output_dir);
+				let stat = std::fs::metadata(&path).context("could not stat clip")?;
+
+				let properties = window::dialog::ClipProperties {
+					id: clip.id,
+					title: clip.title,
+					thumbnail: thumbnail.to_string_lossy().to_string(),
+					absolute_path: path.to_string_lossy().to_string(),
+					game,
+					size: stat.size(),
+					created: clip.created,
+					duration: clip.duration_secs.unwrap_or_default(),
+					codec: clip.codec,
+					container: clip.container,
+					quality: clip.quality,
+					resolution: clip.resolution,
+					fps: clip.fps,
+				};
+				info!(?properties);
+				self.properties_dialog
+					.emit(PropertiesDialogMessage::Show(properties));
+			}
 			Message::SelectGame => {
 				let games = identifier::get_all_games();
 
@@ -1361,13 +1452,16 @@ impl App {
 					}
 				});
 			}
-			Message::OpenClips => {
+			Message::OpenClipId(id) => {
+				let clip = self.db.get_clip(id)?;
+				let file = gio::File::for_path(clip.absolute_path(&self.settings.output_dir));
 				let app = gio::AppInfo::default_for_type("video/mp4", false).context("no default app for video/mp4")?; // the app for mp4s is likely the same for all video formats
+				app.launch(&[file], gio::AppLaunchContext::NONE)
+					.context("could not open clip")?;
+			}
+			Message::OpenClips => {
 				for id in self.get_selected_clips() {
-					let clip = self.db.get_clip(id)?;
-					let file = gio::File::for_path(clip.absolute_path(&self.settings.output_dir));
-					app.launch(&[file], gio::AppLaunchContext::NONE)
-						.context("could not open clip")?;
+					tx.emit(Message::OpenClipId(id));
 				}
 			}
 			Message::DelPressed => tx.emit(Message::DeleteClips),
@@ -1483,6 +1577,8 @@ impl App {
 				relm4::main_application().quit();
 			}
 			Message::Init => {
+				relm4::set_global_css(include_str!("../../assets/style.css"));
+
 				info!("loading games");
 				if let Err(e) = identifier::get_games()
 					.await
@@ -1647,6 +1743,11 @@ impl App {
 						id: 0,
 						title: "Untitled".to_string(),
 						path: relative_path,
+						codec: self.settings.codec,
+						container: self.settings.container,
+						fps: self.settings.frame_rate,
+						quality: self.settings.quality,
+						resolution: self.settings.resolution,
 						game,
 						duration_secs,
 						created,

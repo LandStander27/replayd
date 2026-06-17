@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use serde::{Deserialize, Serialize};
-use strum::{Display, FromRepr};
+use strum::{EnumIter, EnumProperty, FromRepr};
 
 macro_rules! impl_serde {
 	($ty:ty) => {
@@ -42,6 +42,11 @@ pub struct Clip {
 	pub path: PathBuf,
 	pub created: u64,
 	pub duration_secs: Option<u64>,
+	pub codec: Codec,
+	pub container: Container,
+	pub resolution: Resolution,
+	pub quality: Quality,
+	pub fps: FrameRate,
 }
 
 impl Clip {
@@ -57,80 +62,80 @@ impl Clip {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default)]
 pub struct Game {
 	pub id: ObjectId,
 	pub game_id: ObjectId,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, Display)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, EnumProperty, EnumIter)]
 pub enum Resolution {
-	#[strum(to_string = "2560x1440")]
+	#[strum(props(cmd = "2560x1440", display = "1440p"))]
 	P1440,
 
-	#[strum(to_string = "1920x1080")]
+	#[strum(props(cmd = "1920x1080", display = "1080p"))]
 	#[default]
 	P1080,
 
-	#[strum(to_string = "1280x720")]
+	#[strum(props(cmd = "1280x720", display = "720p"))]
 	P720,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, Display)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, EnumProperty, EnumIter)]
 pub enum Codec {
-	#[strum(to_string = "h264")]
+	#[strum(props(cmd = "h264", display = "H.264"))]
 	#[default]
 	H264,
 
-	#[strum(to_string = "av1")]
+	#[strum(props(cmd = "av1", display = "AV1"))]
 	AV1,
 
-	#[strum(to_string = "hevc")]
+	#[strum(props(cmd = "hevc", display = "HEVC"))]
 	HEVC,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, Display)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, EnumProperty, EnumIter)]
 pub enum Container {
-	#[strum(to_string = "mp4")]
+	#[strum(props(cmd = "mp4", display = "MP4"))]
 	#[default]
 	MP4,
 
-	#[strum(to_string = "mkv")]
+	#[strum(props(cmd = "mkv", display = "MKV"))]
 	MKV,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, Display)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, EnumProperty, EnumIter)]
 pub enum Quality {
-	#[strum(to_string = "medium")]
+	#[strum(props(cmd = "medium", display = "Medium"))]
 	Medium,
 
-	#[strum(to_string = "high")]
+	#[strum(props(cmd = "high", display = "High"))]
 	#[default]
 	High,
 
-	#[strum(to_string = "very_high")]
+	#[strum(props(cmd = "very_high", display = "Very High"))]
 	VeryHigh,
 
-	#[strum(to_string = "ultra")]
+	#[strum(props(cmd = "ultra", display = "Ultra"))]
 	Ultra,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, Display)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, FromRepr, EnumProperty, EnumIter)]
 pub enum FrameRate {
-	#[strum(to_string = "24")]
+	#[strum(props(cmd = "24", display = "24"))]
 	Fps24,
 
-	#[strum(to_string = "30")]
+	#[strum(props(cmd = "30", display = "30"))]
 	Fps30,
 
-	#[strum(to_string = "60")]
+	#[strum(props(cmd = "60", display = "60"))]
 	#[default]
 	Fps60,
 
-	#[strum(to_string = "120")]
+	#[strum(props(cmd = "120", display = "120"))]
 	Fps120,
 
-	#[strum(to_string = "144")]
+	#[strum(props(cmd = "144", display = "144"))]
 	Fps144,
 }
 

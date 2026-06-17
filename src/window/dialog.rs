@@ -3,10 +3,12 @@ use crate::prelude::*;
 mod confirm_dialog;
 mod error_dialog;
 mod input_dialog;
+mod properties_dialog;
 mod select_dialog;
 pub use confirm_dialog::{ConfirmDialog, ConfirmDialogMessage, ConfirmDialogResponse, ConfirmDialogSettings};
 pub use error_dialog::ErrorDialog;
 pub use input_dialog::{InputDialog, InputDialogMessage, InputDialogResponse, InputDialogSettings};
+pub use properties_dialog::{ClipProperties, PropertiesDialog, PropertiesDialogMessage, PropertiesDialogSettings};
 pub use select_dialog::{SelectDialog, SelectDialogMessage, SelectDialogResponse, SelectDialogSettings};
 
 #[relm4::widget_template(pub)]

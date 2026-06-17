@@ -15,7 +15,7 @@ pub struct Executable {
 	pub arguments: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct IdentifiableGame {
 	pub id: u64,
 	pub name: String,

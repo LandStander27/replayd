@@ -29,16 +29,6 @@ pub struct SelectDialog<T: IsA<gtk::Widget>> {
 	dropdown: gtk::DropDown,
 }
 
-// impl<T: IsA<gtk::Widget>> SelectDialog<T> {
-// 	fn new(window: T, root: adw::Dialog) -> Self {
-// 		return Self {
-// 			window,
-// 			root,
-// 			initial: String::new(),
-// 		};
-// 	}
-// }
-
 #[relm4::component(pub async)]
 impl<T: IsA<gtk::Widget>> SimpleAsyncComponent for SelectDialog<T> {
 	type Init = SelectDialogSettings<T>;
