@@ -133,7 +133,7 @@ impl Db {
 		return Ok(clip);
 	}
 
-	pub fn rename_clip(&self, id: ObjectId, title: String) -> Result<()> {
+	pub fn rename_clip(&self, id: ObjectId, title: impl Into<String>) -> Result<()> {
 		return self.write(|writer| {
 			let mut table = writer.open_table(CLIPS_TABLE)?;
 			let mut json = table
@@ -141,7 +141,7 @@ impl Db {
 				.context("could not get clip")?
 				.context("invalid clip")?;
 			let mut clip = Clip::decode(json.value())?;
-			clip.title = title;
+			clip.title = title.into();
 			json.insert(clip.encode()?.as_slice())
 				.context("could not modify clip")?;
 			return Ok(());

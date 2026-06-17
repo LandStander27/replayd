@@ -29,14 +29,12 @@ struct App {
 	clips_data: ClipsData,
 	sort_order: SortOrder,
 	user_overrode_sort: bool,
-	selected_game: Option<ObjectId>,
 	delete_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
 	delete_db_dialog: AsyncController<ConfirmDialog<adw::ApplicationWindow>>,
 	input_dialog: AsyncController<InputDialog<adw::ApplicationWindow>>,
 	select_game_dialog: AsyncController<SelectDialog<adw::ApplicationWindow>>,
-	relevant_clip: Option<ObjectId>,
-	deleting_clips: Vec<ObjectId>,
-	renaming_clip: ObjectId,
+	selected_game: Option<ObjectId>,
+	// relevant_clips: Vec<ObjectId>,
 	audio_player: Option<AudioPlayer>,
 	main_stack: gtk::Stack,
 	search_debounce: Option<glib::SourceId>,
@@ -64,7 +62,6 @@ pub enum Message {
 	LoadGames,
 	SearchChanged(String),
 	Search(String),
-	// GamesLoaded(Vec<db::Game>),
 	GameSelected(DynamicIndex),
 	GameDeselected,
 	ClipReceived(PathBuf),
@@ -75,16 +72,17 @@ pub enum Message {
 	DeleteDb,
 	DeleteDbConfirm,
 	SetOutputDir(PathBuf),
-	DeleteClips(Vec<ObjectId>),
+	DeleteClips,
 	DeleteClipsConfirm,
-	RenameClip(ObjectId),
-	RenameClipConfirm(String),
-	OpenClipFolder(ObjectId),
-	OpenClip(ObjectId),
-	SelectGame(ObjectId),
+	RenameClips,
+	RenameClipsConfirm(String),
+	OpenClipFolder,
+	OpenClips,
+	SelectGame,
 	SelectGameConfirm(ObjectId),
 	F2Pressed,
 	DelPressed,
+	EscapePressed,
 	SetSortOrder(SortOrder, bool),
 }
 
@@ -268,14 +266,7 @@ impl AsyncComponent for App {
 							set_min_columns: 1,
 							set_single_click_activate: false,
 
-							connect_activate[sender, selection = clips_data.selection] => move |_, pos| {
-								let obj = selection
-									.item(pos)
-									.unwrap()
-									.downcast::<ClipObject>()
-									.unwrap();
-								sender.input(Message::OpenClip(obj.clip().id));
-							},
+							connect_activate[sender] => move |_, _| sender.input(Message::OpenClips),
 
 							add_controller = gtk::EventControllerKey {
 								connect_key_pressed[sender] => move |_, key, _, _| {
@@ -286,6 +277,10 @@ impl AsyncComponent for App {
 										}
 										gdk::Key::Delete => {
 											sender.input(Message::DelPressed);
+											glib::Propagation::Stop
+										}
+										gdk::Key::Escape => {
+											sender.input(Message::EscapePressed);
 											glib::Propagation::Stop
 										}
 										_ => glib::Propagation::Proceed,
@@ -720,7 +715,7 @@ impl AsyncComponent for App {
 					cancel_label: "Cancel".to_string(),
 				})
 				.forward(sender.input_sender(), |msg| match msg {
-					InputDialogResponse::Confirm(s) => Message::RenameClipConfirm(s),
+					InputDialogResponse::Confirm(s) => Message::RenameClipsConfirm(s),
 					_ => Message::Void,
 				}),
 			select_game_dialog: SelectDialog::builder()
@@ -757,17 +752,11 @@ impl AsyncComponent for App {
 			shortcuts,
 			settings,
 			clips_data: clips_data.clone(),
-			// clips_store: clips_store.clone(),
-			// clips_selection: clips_selection.clone(),
-			// clips_filter: clips_filter.clone(),
-			// clips_sorter: clips_sorter.clone(),
 			sort_order: SortOrder::default(),
 			user_overrode_sort: false,
 			selected_game: None,
-			deleting_clips: Vec::new(),
-			renaming_clip: 0,
 			audio_player,
-			relevant_clip: None,
+			// relevant_clips: Vec::new(),
 			main_stack: gtk::Stack::default(),
 			search_debounce: None,
 		};
@@ -943,8 +932,10 @@ impl App {
 
 						add_controller = gtk::GestureClick {
 							set_button: 3,
-							connect_pressed[clips_selection, popover] => move |gesture, _, x, y| {
-								clips_selection.unselect_all();
+							connect_pressed[clips_selection, popover, item] => move |gesture, _, x, y| {
+								if !item.is_selected() {
+									clips_selection.select_item(item.position(), true);
+								}
 								gesture.set_state(gtk::EventSequenceState::Claimed);
 								popover.set_halign(gtk::Align::Start);
 								popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 0, 0)));
@@ -1050,23 +1041,23 @@ impl App {
 				let mut group = RelmActionGroup::<ClipActionGroup>::new();
 				group.add_action(RelmAction::<ClipSelectGame>::new_stateless({
 					let sender = sender.clone();
-					move |_| sender.emit(Message::SelectGame(clip.id))
+					move |_| sender.emit(Message::SelectGame)
 				}));
 				group.add_action(RelmAction::<ClipRename>::new_stateless({
 					let sender = sender.clone();
-					move |_| sender.emit(Message::RenameClip(clip.id))
+					move |_| sender.emit(Message::RenameClips)
 				}));
 				group.add_action(RelmAction::<ClipDelete>::new_stateless({
 					let sender = sender.clone();
-					move |_| sender.emit(Message::DeleteClips(vec![clip.id]))
+					move |_| sender.emit(Message::DeleteClips)
 				}));
 				group.add_action(RelmAction::<ClipOpenFolder>::new_stateless({
 					let sender = sender.clone();
-					move |_| sender.emit(Message::OpenClipFolder(clip.id))
+					move |_| sender.emit(Message::OpenClipFolder)
 				}));
 				group.add_action(RelmAction::<ClipOpen>::new_stateless({
 					let sender = sender.clone();
-					move |_| sender.emit(Message::OpenClip(clip.id))
+					move |_| sender.emit(Message::OpenClips)
 				}));
 				group.register_for_widget(&card);
 			}
@@ -1200,18 +1191,35 @@ impl App {
 		return Ok(());
 	}
 
+	fn get_selected_clips(&self) -> Vec<ObjectId> {
+		return (0..self.clips_data.selection.n_items())
+			.filter_map(|i| {
+				if self.clips_data.selection.is_selected(i) {
+					Some(
+						self.clips_data
+							.selection
+							.item(i)
+							.unwrap()
+							.downcast::<ClipObject>()
+							.unwrap()
+							.clip()
+							.id,
+					)
+				} else {
+					None
+				}
+			})
+			.collect();
+	}
+
 	#[tracing::instrument(skip(self, msg, sender))]
 	async fn update(&mut self, msg: Message, sender: AsyncComponentSender<Self>) -> Result<()> {
 		info!("update");
 		let tx = sender.input_sender();
 		match msg {
 			Message::Void => {}
-			Message::SelectGame(id) => {
+			Message::SelectGame => {
 				let games = identifier::get_all_games();
-				self.relevant_clip = Some(id);
-				// self.game_id_list = std::iter::once(None)
-				// 	.chain(games.iter().map(|g| Some(g.id)))
-				// 	.collect();
 
 				let options = std::iter::once("None".to_string())
 					.chain(games.iter().map(|x| x.name.clone()))
@@ -1233,8 +1241,11 @@ impl App {
 						Some(id)
 					}
 				};
-				let clip = self.relevant_clip.take().unwrap();
-				self.db.set_clip_game(clip, game_id)?;
+
+				for id in self.get_selected_clips() {
+					self.db.set_clip_game(id, game_id)?;
+				}
+
 				App::delete_old_games(self.db.clone(), tx.clone())?;
 				tx.emit(Message::LoadClips);
 			}
@@ -1336,8 +1347,8 @@ impl App {
 				tx.emit(Message::LoadClips);
 			}
 			Message::ClearThumbnailCache => thumbnail::clear_cache()?,
-			Message::OpenClipFolder(id) => {
-				info!("clip id: {id}");
+			Message::OpenClipFolder => {
+				let id = self.get_selected_clips()[0]; // TODO: add bounds checks
 				let clip = self.db.get_clip(id)?;
 				let file = File::open(clip.absolute_path(&self.settings.output_dir)).context("could not open file")?;
 
@@ -1350,44 +1361,22 @@ impl App {
 					}
 				});
 			}
-			Message::OpenClip(id) => {
-				info!("clip id: {id}");
-				let clip = self.db.get_clip(id)?;
-				let file = gio::File::for_path(clip.absolute_path(&self.settings.output_dir));
+			Message::OpenClips => {
 				let app = gio::AppInfo::default_for_type("video/mp4", false).context("no default app for video/mp4")?; // the app for mp4s is likely the same for all video formats
-				app.launch(&[file], gio::AppLaunchContext::NONE)
-					.context("could not open clip")?;
-			}
-			Message::DelPressed => {
-				let ids: Vec<ObjectId> = (0..self.clips_data.selection.n_items())
-					.filter_map(|i| {
-						if self.clips_data.selection.is_selected(i) {
-							Some(
-								self.clips_data
-									.selection
-									.item(i)
-									.unwrap()
-									.downcast::<ClipObject>()
-									.unwrap()
-									.clip()
-									.id,
-							)
-						} else {
-							None
-						}
-					})
-					.collect();
-
-				if !ids.is_empty() {
-					tx.emit(Message::DeleteClips(ids));
+				for id in self.get_selected_clips() {
+					let clip = self.db.get_clip(id)?;
+					let file = gio::File::for_path(clip.absolute_path(&self.settings.output_dir));
+					app.launch(&[file], gio::AppLaunchContext::NONE)
+						.context("could not open clip")?;
 				}
 			}
-			Message::DeleteClips(clips) => {
-				self.deleting_clips = clips;
-				self.delete_dialog.emit(ConfirmDialogMessage::Show);
+			Message::DelPressed => tx.emit(Message::DeleteClips),
+			Message::EscapePressed => {
+				self.clips_data.selection.unselect_all();
 			}
+			Message::DeleteClips => self.delete_dialog.emit(ConfirmDialogMessage::Show),
 			Message::DeleteClipsConfirm => {
-				let ids = std::mem::take(&mut self.deleting_clips);
+				let ids = self.get_selected_clips();
 				let db = self.db.clone();
 				let library = self.settings.output_dir.clone();
 				let tx = tx.clone();
@@ -1426,32 +1415,21 @@ impl App {
 					return Message::LoadClips;
 				});
 			}
-			Message::F2Pressed => {
-				let selected: Vec<u32> = (0..self.clips_data.selection.n_items())
-					.filter(|&i| self.clips_data.selection.is_selected(i))
-					.collect();
-
-				if selected.len() == 1 {
-					let obj = self
-						.clips_data
-						.selection
-						.item(selected[0])
-						.unwrap()
-						.downcast::<ClipObject>()
-						.unwrap();
-
-					tx.emit(Message::RenameClip(obj.clip().id));
+			Message::F2Pressed => tx.emit(Message::RenameClips),
+			Message::RenameClips => {
+				let clips = self.get_selected_clips();
+				if clips.len() == 1 {
+					self.input_dialog
+						.emit(InputDialogMessage::Show(self.db.get_clip(clips[0])?.title));
+				} else {
+					self.input_dialog
+						.emit(InputDialogMessage::Show("New titles".to_string()));
 				}
 			}
-			Message::RenameClip(clip) => {
-				info!("clip id: {clip}");
-				self.renaming_clip = clip;
-				self.input_dialog
-					.emit(InputDialogMessage::Show(self.db.get_clip(clip)?.title));
-			}
-			Message::RenameClipConfirm(title) => {
-				let id = std::mem::take(&mut self.renaming_clip);
-				self.db.rename_clip(id, title)?;
+			Message::RenameClipsConfirm(title) => {
+				for id in self.get_selected_clips() {
+					self.db.rename_clip(id, &title)?;
+				}
 				tx.emit(Message::LoadClips);
 			}
 			Message::SetOutputDir(dir) => {
