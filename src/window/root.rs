@@ -38,6 +38,7 @@ struct App {
 	audio_player: Option<AudioPlayer>,
 	main_stack: gtk::Stack,
 	search_debounce: Option<glib::SourceId>,
+	custom_actions: FactoryVecDeque<CustomActionRow>,
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, strum::FromRepr)]
@@ -86,6 +87,10 @@ pub enum Message {
 	DelPressed,
 	EscapePressed,
 	SetSortOrder(SortOrder, bool),
+	AddCustomAction,
+	EditCustomAction(ObjectId),
+	EditCustomActionConfirm(CustomAction),
+	DeleteCustomAction(ObjectId),
 }
 
 relm4::new_action_group!(ClipActionGroup, "clip");
@@ -550,7 +555,25 @@ impl AsyncComponent for App {
 								}
 							},
 						}
-					}
+					},
+					adw::PreferencesGroup {
+						set_title: "Custom context menu actions",
+						set_description: Some("Add shell commands to run on clips."), // TODO: explain what shell vars you can use
+
+						#[local_ref]
+						custom_actions_box -> gtk::ListBox {
+							set_selection_mode: gtk::SelectionMode::None,
+							add_css_class: "boxed-list",
+						},
+
+						#[wrap(Some)]
+						set_header_suffix = &gtk::Button {
+							set_icon_name: "list-add-symbolic",
+							set_valign: gtk::Align::Center,
+							add_css_class: "flat",
+							connect_clicked => Message::AddCustomAction,
+						},
+					},
 				}
 			},
 
@@ -780,10 +803,14 @@ impl AsyncComponent for App {
 			audio_player,
 			main_stack: gtk::Stack::default(),
 			search_debounce: None,
+			custom_actions: FactoryVecDeque::builder()
+				.launch(gtk::ListBox::default())
+				.forward(sender.input_sender(), |a| a),
 		};
 
 		let main_stack = &app.main_stack;
 		let games_box = app.games.widget();
+		let custom_actions_box = app.custom_actions.widget();
 		let mut widgets = view_output!();
 
 		let bp = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
@@ -901,6 +928,7 @@ impl App {
 
 		factory.connect_setup({
 			let clips_selection = clips_selection.clone();
+			let actions = settings.custom_actions.clone();
 			move |_, item| {
 				let item = item.downcast_ref::<gtk::ListItem>().unwrap();
 
@@ -921,8 +949,6 @@ impl App {
 						append: (Some("Rename"), Some(&ClipRename::action_name())),
 						append: (Some("Select game"), Some(&ClipSelectGame::action_name())),
 						append: (Some("Show in Files"), Some(&ClipOpenFolder::action_name())),
-						append_section: (None, &danger_section),
-						append_section: (None, &bottom_section),
 					},
 
 					#[name(popover)]
@@ -999,12 +1025,22 @@ impl App {
 					}
 				}
 
+				if !actions.is_empty() {
+					for cmd in &actions {
+						menu_model.append(Some(&cmd.name), Some(&format!("clip.custom-{}", cmd.id)));
+					}
+				}
+
+				menu_model.append_section(None, &danger_section);
+				menu_model.append_section(None, &bottom_section);
+
 				item.set_child(Some(&card));
 			}
 		});
 
 		factory.connect_bind({
 			let library = settings.output_dir.clone();
+			let actions = settings.custom_actions.clone();
 			move |_, item| {
 				let item = item.downcast_ref::<gtk::ListItem>().unwrap();
 				let clip_obj = item.item().unwrap().downcast::<ClipObject>().unwrap();
@@ -1112,7 +1148,26 @@ impl App {
 					let sender = sender.clone();
 					move |_| sender.emit(Message::OpenClips)
 				}));
-				group.register_for_widget(&card);
+				let group = group.into_action_group();
+
+				for cmd in &actions {
+					let action_name = format!("custom-{}", cmd.id);
+					let action = gio::SimpleAction::new(&action_name, None);
+					let cmd = cmd.clone();
+					let path = clip.absolute_path(&library);
+					action.connect_activate(move |_, _| {
+						std::process::Command::new("sh")
+							.arg("-c")
+							.arg(&cmd.command)
+							.env("REPLAYD_CLIP_PATH", path.display().to_string())
+							.stdin(Stdio::null())
+							.spawn()
+							.ok();
+					});
+					group.add_action(&action);
+				}
+
+				card.insert_action_group(ClipActionGroup::NAME, Some(&group));
 			}
 		});
 
@@ -1270,6 +1325,137 @@ impl App {
 		let tx = sender.input_sender();
 		match msg {
 			Message::Void => {}
+			Message::AddCustomAction => {
+				self.db
+					.create_custom_action()
+					.context("could not create action")?;
+				tx.emit(Message::LoadSettings);
+			}
+			Message::DeleteCustomAction(id) => {
+				self.db.write_settings(|settings| -> Result<()> {
+					let index = settings
+						.custom_actions
+						.iter()
+						.position(|x| x.id == id)
+						.context("could not find action")?;
+					settings.custom_actions.remove(index);
+
+					return Ok(());
+				})??;
+				tx.emit(Message::LoadSettings);
+			}
+			Message::EditCustomActionConfirm(action) => {
+				self.db.write_settings(|settings| -> Result<()> {
+					let old = settings
+						.custom_actions
+						.iter_mut()
+						.find(|x| x.id == action.id)
+						.context("could not find action")?;
+
+					*old = action;
+					return Ok(());
+				})??;
+				tx.emit(Message::LoadSettings);
+			}
+			Message::EditCustomAction(id) => {
+				let action = self
+					.settings
+					.custom_actions
+					.iter()
+					.find(|x| x.id == id)
+					.context("could not find action")?;
+
+				relm4::view! {
+					#[name(root)]
+					adw::Dialog {
+						present: Some(&self.window),
+						inline_css: "border-bottom-left-radius: 13px",
+						inline_css: "border-bottom-right-radius: 13px",
+						set_content_width: 360,
+
+						set_title: "Custom Action",
+
+						#[wrap(Some)]
+						set_child = &adw::ToolbarView {
+							add_top_bar = &adw::HeaderBar {},
+
+							#[wrap(Some)]
+							set_content = &gtk::Box {
+								set_orientation: gtk::Orientation::Vertical,
+
+								gtk::Box {
+									set_orientation: gtk::Orientation::Vertical,
+									set_spacing: 8,
+									set_vexpand: true,
+									inline_css: "padding: 24px 30px",
+
+									#[name(name)]
+									gtk::Entry {
+										set_text: &action.name,
+										set_placeholder_text: Some("Name"),
+										set_activates_default: true,
+									},
+
+									#[name(cmd)]
+									gtk::Entry {
+										set_text: &action.command,
+										set_placeholder_text: Some("Shell command"),
+										set_activates_default: true,
+									},
+								},
+
+								gtk::Box {
+									set_orientation: gtk::Orientation::Vertical,
+									set_vexpand_set: true,
+									set_valign: gtk::Align::End,
+									gtk::Separator {},
+
+									gtk::Box {
+										set_homogeneous: true,
+										set_vexpand: true,
+										set_valign: gtk::Align::End,
+
+										gtk::Button {
+											add_css_class: "flat",
+											set_hexpand: true,
+											inline_css: "padding: 10px 14px",
+											inline_css: "border-radius: 0px",
+											inline_css: "border-width: 0px",
+											connect_clicked[sender, id = action.id, root] => move |_| {
+												sender.input(Message::EditCustomActionConfirm(CustomAction {
+													id,
+													command: cmd.text().to_string(),
+													name: name.text().to_string(),
+												}));
+												root.close();
+											},
+
+											gtk::Label {
+												set_label: "Confirm",
+												add_css_class: "suggested",
+											}
+										},
+
+										gtk::Button {
+											add_css_class: "flat",
+											set_hexpand: true,
+											inline_css: "padding: 10px 14px",
+											inline_css: "border-radius: 0px",
+											inline_css: "border-width: 0px",
+											connect_clicked[root] => move |_| _ = root.close(),
+
+											gtk::Label {
+												set_label: "Cancel",
+												add_css_class: "flat",
+											}
+										},
+									}
+								},
+							}
+						},
+					}
+				}
+			}
 			Message::OpenClipProperties => {
 				let id = self.get_selected_clips()[0];
 				self.clips_data.selection.unselect_all();
@@ -1550,7 +1736,14 @@ impl App {
 					);
 				});
 			}
-			Message::LoadSettings => self.settings = self.db.read_settings()?,
+			Message::LoadSettings => {
+				self.settings = self.db.read_settings()?;
+				let mut guard = self.custom_actions.guard();
+				guard.clear();
+				for cmd in &self.settings.custom_actions {
+					guard.push_back(cmd.clone());
+				}
+			}
 			Message::Error(e) => self.error_dialog.show(e),
 			Message::Close => self.visible = false,
 			Message::ShowWindow => {
@@ -1760,6 +1953,41 @@ impl App {
 		}
 
 		return Ok(());
+	}
+}
+
+#[derive(Debug)]
+struct CustomActionRow {
+	action: CustomAction,
+}
+
+#[relm4::factory]
+impl FactoryComponent for CustomActionRow {
+	type Init = CustomAction;
+	type Input = ();
+	type Output = Message;
+	type CommandOutput = ();
+	type ParentWidget = gtk::ListBox;
+
+	view! {
+		adw::ActionRow {
+			set_title: &self.action.name,
+			set_subtitle: &self.action.command,
+			set_activatable: true,
+			connect_activated[sender, id = self.action.id] => move |_| sender.output(Message::EditCustomAction(id)).unwrap(),
+
+			add_suffix = &gtk::Button {
+				set_icon_name: "user-trash-symbolic",
+				set_valign: gtk::Align::Center,
+				add_css_class: "flat",
+
+				connect_clicked[sender, id = self.action.id] => move |_| sender.output(Message::DeleteCustomAction(id)).unwrap(),
+			},
+		}
+	}
+
+	fn init_model(action: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
+		return Self { action };
 	}
 }
 

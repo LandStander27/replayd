@@ -7,7 +7,7 @@ pub use color_eyre::{
 	Result,
 	eyre::{Context, ContextCompat, eyre},
 };
-pub use db::{Clip, Codec, Container, Db, FrameRate, Game, ObjectId, Quality, Resolution, Settings};
+pub use db::{Clip, Codec, Container, CustomAction, Db, FrameRate, Game, ObjectId, Quality, Resolution, Settings};
 pub use gtk::{gdk, gio, glib};
 pub use identifier::IdentifiableGame;
 pub use identifier::{Window, WindowManager};

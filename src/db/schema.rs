@@ -140,6 +140,13 @@ pub enum FrameRate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomAction {
+	pub id: ObjectId,
+	pub name: String,
+	pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
 	pub buffer_length: u64,
 	pub codec: Codec,
@@ -152,6 +159,9 @@ pub struct Settings {
 	pub show_end_title_buttons: bool,
 	pub notifications: bool,
 	pub sound_feedback: bool,
+
+	#[serde(default)]
+	pub custom_actions: Vec<CustomAction>,
 }
 
 impl Default for Settings {
@@ -174,6 +184,7 @@ impl Default for Settings {
 			show_end_title_buttons: true,
 			notifications: false,
 			sound_feedback: true,
+			custom_actions: Vec::new(),
 		};
 	}
 }

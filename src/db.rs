@@ -64,6 +64,22 @@ impl Db {
 		});
 	}
 
+	pub fn create_custom_action(&self) -> Result<ObjectId> {
+		return self.write_settings(|settings| {
+			let action = CustomAction {
+				id: settings
+					.custom_actions
+					.last()
+					.map(|x| x.id + 1)
+					.unwrap_or_default(),
+				command: "New command".to_string(),
+				name: "New action".to_string(),
+			};
+			settings.custom_actions.push(action.clone());
+			return Ok(action.id);
+		})?;
+	}
+
 	pub fn add_game(&self, mut game: Game) -> Result<ObjectId> {
 		return self.write(|writer| {
 			let mut table = writer.open_table(GAMES_TABLE)?;
