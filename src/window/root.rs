@@ -1168,6 +1168,12 @@ impl App {
 									.arg("-c")
 									.arg(&cmd.command)
 									.env("REPLAYD_CLIP_PATH", path.display().to_string())
+									.env(
+										"REPLAYD_CLIP_FILETYPE",
+										path.extension()
+											.map(|x| x.to_string_lossy().to_string())
+											.unwrap_or_default(),
+									)
 									.env("REPLAYD_CLIP_TITLE", &clip.title)
 									.stdin(Stdio::null())
 									.spawn()
@@ -1442,6 +1448,14 @@ impl App {
 										set_text: &action.name,
 										set_placeholder_text: Some("Name"),
 										set_activates_default: true,
+										connect_activate[sender, cmd, id = action.id, root] => move |name| {
+											sender.input(Message::EditCustomActionConfirm(CustomAction {
+												id,
+												command: cmd.text().to_string(),
+												name: name.text().to_string(),
+											}));
+											root.close();
+										},
 									},
 
 									#[name(cmd)]
@@ -1449,6 +1463,14 @@ impl App {
 										set_text: &action.command,
 										set_placeholder_text: Some("Shell command"),
 										set_activates_default: true,
+										connect_activate[sender, name, id = action.id, root] => move |cmd| {
+											sender.input(Message::EditCustomActionConfirm(CustomAction {
+												id,
+												command: cmd.text().to_string(),
+												name: name.text().to_string(),
+											}));
+											root.close();
+										},
 									},
 
 									gtk::Label {
@@ -1459,6 +1481,7 @@ Your command will be ran like this: <tt>sh -c '%COMMAND%'</tt>.
 These environment variables are available:
 • <tt>REPLAYD_CLIP_PATH</tt>: The full, absolute path to the clip.
 • <tt>REPLAYD_CLIP_TITLE</tt>: The title given to the clip.
+• <tt>REPLAYD_CLIP_FILETYPE</tt>: The file extension of the clip (e.g., <tt>mpv</tt>, <tt>mkv</tt>).
 
 Note: You must restart Replayd to apply the changes.
 
