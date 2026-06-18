@@ -23,6 +23,7 @@ struct App {
 	game_filter_dropdown: gtk::DropDown,
 	game_filter_ids: Vec<Option<ObjectId>>,
 	show_favorited_only: bool,
+	show_favorited_button: gtk::ToggleButton,
 	db: Db,
 	recorder: Recorder,
 	window_manager: Box<dyn WindowManager>,
@@ -180,7 +181,8 @@ impl AsyncComponent for App {
 						}
 					},
 
-					gtk::ToggleButton {
+					#[local_ref]
+					show_favorited_button -> gtk::ToggleButton {
 						set_icon_name: "starred-symbolic",
 						set_valign: gtk::Align::Center,
 						add_css_class: "flat",
@@ -833,11 +835,12 @@ impl AsyncComponent for App {
 				.forward(sender.input_sender(), |a| a),
 			game_filter_dropdown: gtk::DropDown::default(),
 			game_filter_ids: Vec::new(),
+			show_favorited_button: gtk::ToggleButton::default(),
 			show_favorited_only: false,
 		};
 
 		let main_stack = &app.main_stack;
-		// let games_box = app.games.widget();
+		let show_favorited_button = &app.show_favorited_button;
 		let game_filter_dropdown = app.game_filter_dropdown.clone();
 		let custom_actions_box = app.custom_actions.widget();
 		let mut widgets = view_output!();
@@ -1399,16 +1402,20 @@ impl App {
 	}
 
 	fn set_main_stack(&self) -> Result<()> {
-		if self
-			.db
-			.get_num_clips()
-			.context("could not get number of clips")?
-			== 0
-		{
-			self.main_stack.set_visible_child_name("empty-library");
+		let n_clips = self.db.get_num_clips()?;
+		let n_visible = self.clips_data.selection.n_items();
+
+		let state = if n_clips == 0 {
+			"empty-library"
+		} else if n_visible == 0 && self.show_favorited_only {
+			"empty-favorites"
+		} else if n_visible == 0 {
+			"empty-search"
 		} else {
-			self.main_stack.set_visible_child_name("grid");
-		}
+			"grid"
+		};
+
+		self.main_stack.set_visible_child_name(state);
 
 		return Ok(());
 	}
@@ -1472,16 +1479,7 @@ impl App {
 			Message::SetFavoritedFilter(favorited) => {
 				self.show_favorited_only = favorited;
 				self.apply_filters();
-
-				if favorited {
-					if self.db.get_clips()?.iter().all(|x| !x.favorited) {
-						self.main_stack.set_visible_child_name("empty-favorites");
-					} else {
-						self.set_main_stack()?;
-					}
-				} else {
-					self.set_main_stack()?;
-				}
+				self.set_main_stack()?;
 			}
 			Message::ClipFavorited(id, favorited) => {
 				self.db.favorite_clip(id, favorited)?;
@@ -1735,7 +1733,6 @@ Note: You must restart Replayd to apply the changes.
 			Message::Search(query) => {
 				self.search_debounce = None;
 				if query.is_empty() {
-					self.set_main_stack()?;
 					self.user_overrode_sort = false;
 					if self.sort_order == SortOrder::Relevance {
 						self.sort_order = SortOrder::default();
@@ -1747,6 +1744,7 @@ Note: You must restart Replayd to apply the changes.
 				let mut scores = self.clips_data.scores.write().map_err(|x| eyre!("{x}"))?;
 				scores.clear();
 				self.game_filter_dropdown.set_selected(0);
+				self.show_favorited_button.set_active(false);
 				if !query.is_empty() {
 					let mut searcher = search::Searcher::new();
 					for i in 0..self.clips_data.store.n_items() {
@@ -1777,17 +1775,13 @@ Note: You must restart Replayd to apply the changes.
 							}
 						}
 					});
-					if self.clips_data.selection.n_items() == 0 {
-						self.main_stack.set_visible_child_name("empty-search");
-					} else {
-						self.set_main_stack()?;
-					}
 				} else {
 					drop(scores);
 					self.apply_filters();
 				}
 
 				self.apply_sort();
+				self.set_main_stack()?;
 			}
 			Message::SetSortOrder(sort, is_user) => {
 				if is_user {
@@ -1983,8 +1977,6 @@ Note: You must restart Replayd to apply the changes.
 				tx.emit(Message::LoadClips);
 			}
 			Message::LoadClips => {
-				self.set_main_stack()?;
-
 				if self
 					.db
 					.get_num_clips()
@@ -2001,6 +1993,7 @@ Note: You must restart Replayd to apply the changes.
 				}
 
 				self.clips_data.filter.changed(gtk::FilterChange::Different);
+				self.set_main_stack()?;
 			}
 			Message::LoadGames => {
 				let games = self.db.get_games()?;
