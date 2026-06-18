@@ -47,6 +47,9 @@ pub struct Clip {
 	pub resolution: Resolution,
 	pub quality: Quality,
 	pub fps: FrameRate,
+
+	#[serde(default)]
+	pub favorited: bool,
 }
 
 impl Clip {

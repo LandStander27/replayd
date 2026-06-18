@@ -19,7 +19,10 @@ struct App {
 	tray: ksni::Handle<Tray>,
 	visible: bool,
 	additional_css_class: Option<&'static str>,
-	games: FactoryVecDeque<GameChip>,
+	selected_game: Option<ObjectId>,
+	game_filter_dropdown: gtk::DropDown,
+	game_filter_ids: Vec<Option<ObjectId>>,
+	show_favorited_only: bool,
 	db: Db,
 	recorder: Recorder,
 	window_manager: Box<dyn WindowManager>,
@@ -34,7 +37,6 @@ struct App {
 	input_dialog: AsyncController<InputDialog<adw::ApplicationWindow>>,
 	properties_dialog: AsyncController<PropertiesDialog<adw::ApplicationWindow>>,
 	select_game_dialog: AsyncController<SelectDialog<adw::ApplicationWindow>>,
-	selected_game: Option<ObjectId>,
 	audio_player: Option<AudioPlayer>,
 	main_stack: gtk::Stack,
 	search_debounce: Option<glib::SourceId>,
@@ -63,8 +65,11 @@ pub enum Message {
 	LoadGames,
 	SearchChanged(String),
 	Search(String),
-	GameSelected(DynamicIndex),
-	GameDeselected,
+	GameFilterChanged(u32),
+	ClipFavorited(ObjectId, bool),
+	SetFavoritedFilter(bool),
+	// GameSelected(DynamicIndex),
+	// GameDeselected,
 	ClipReceived(PathBuf),
 	SaveClip,
 	ToggleClipping,
@@ -154,19 +159,36 @@ impl AsyncComponent for App {
 
 				},
 
-				gtk::ScrolledWindow {
-					set_hexpand: true,
-					set_vscrollbar_policy: gtk::PolicyType::Never,
-					set_hscrollbar_policy: gtk::PolicyType::Automatic,
+				gtk::Box {
+					set_orientation: gtk::Orientation::Horizontal,
+					set_spacing: 8,
 					set_margin_start: 12,
 					set_margin_end: 12,
 
+					gtk::Label {
+						set_label: "Filters",
+						set_valign: gtk::Align::Center,
+						add_css_class: "dim-label",
+						add_css_class: "caption",
+					},
+
 					#[local_ref]
-					games_box -> gtk::Box {
-						set_orientation: gtk::Orientation::Horizontal,
-						set_spacing: 8,
-						set_margin_top: 4,
-						set_margin_bottom: 4,
+					game_filter_dropdown -> gtk::DropDown {
+						set_valign: gtk::Align::Center,
+						connect_selected_notify[sender] => move |dd| {
+							sender.input(Message::GameFilterChanged(dd.selected()));
+						}
+					},
+
+					gtk::ToggleButton {
+						set_icon_name: "starred-symbolic",
+						set_valign: gtk::Align::Center,
+						add_css_class: "flat",
+						set_tooltip_text: Some("Show favorited only"),
+
+						connect_toggled[sender] => move |btn| {
+							sender.input(Message::SetFavoritedFilter(btn.is_active()));
+						}
 					}
 				},
 
@@ -258,6 +280,12 @@ impl AsyncComponent for App {
 						set_title: "No results",
 						set_description: Some("Try another search term."),
 						set_icon_name: Some("system-search-symbolic"),
+					},
+
+					add_named[Some("empty-favorites")] = &adw::StatusPage {
+						set_title: "No favorites",
+						set_description: Some("Maybe lower the bar a little?"),
+						set_icon_name: Some("starred-symbolic"),
 					},
 
 					add_named[Some("grid")] = &gtk::ScrolledWindow {
@@ -787,9 +815,6 @@ impl AsyncComponent for App {
 			} else {
 				None
 			},
-			games: FactoryVecDeque::builder()
-				.launch(gtk::Box::default())
-				.forward(sender.input_sender(), |a| a),
 			db: db.clone(),
 			recorder: Recorder::new(),
 			socket_listener: listener,
@@ -806,10 +831,14 @@ impl AsyncComponent for App {
 			custom_actions: FactoryVecDeque::builder()
 				.launch(gtk::ListBox::default())
 				.forward(sender.input_sender(), |a| a),
+			game_filter_dropdown: gtk::DropDown::default(),
+			game_filter_ids: Vec::new(),
+			show_favorited_only: false,
 		};
 
 		let main_stack = &app.main_stack;
-		let games_box = app.games.widget();
+		// let games_box = app.games.widget();
+		let game_filter_dropdown = app.game_filter_dropdown.clone();
 		let custom_actions_box = app.custom_actions.widget();
 		let mut widgets = view_output!();
 
@@ -972,6 +1001,20 @@ impl App {
 								add_css_class: "duration-overlay",
 							},
 
+							add_overlay = &gtk::Button {
+								set_halign: gtk::Align::Start,
+								set_valign: gtk::Align::Start,
+								set_margin_start: 6,
+								set_margin_top: 6,
+								add_css_class: "flat",
+								add_css_class: "circular",
+								add_css_class: "favorite-btn",
+
+								gtk::Image {
+									set_pixel_size: 16,
+								},
+							},
+
 							gtk::Stack {
 								add_named[Some("loading")] = &gtk::Spinner {
 									set_spinning: true,
@@ -1068,6 +1111,46 @@ impl App {
 				} else {
 					duration_label.set_visible(false);
 				}
+
+				let favorite_button = overlay
+					.observe_children()
+					.item(2) // no clue why this should be 1, expected 0
+					.unwrap()
+					.downcast::<gtk::Button>()
+					.unwrap();
+
+				let icon = favorite_button
+					.child()
+					.unwrap()
+					.downcast::<gtk::Image>()
+					.unwrap();
+				icon.set_icon_name(Some(if clip.favorited {
+					"starred-symbolic"
+				} else {
+					"non-starred-symbolic"
+				}));
+
+				if let Some(id) = unsafe { favorite_button.steal_data::<glib::SignalHandlerId>("click-handler") } {
+					favorite_button.disconnect(id);
+				}
+
+				let handler_id = favorite_button.connect_clicked({
+					let icon = icon.clone();
+					let sender = sender.clone();
+					let id = clip.id;
+					move |_| {
+						let currently_starred = icon.icon_name().as_deref() == Some("starred-symbolic");
+						let new_state = !currently_starred;
+						icon.set_icon_name(Some(if new_state {
+							"starred-symbolic"
+						} else {
+							"non-starred-symbolic"
+						}));
+						sender.emit(Message::ClipFavorited(id, new_state));
+					}
+				});
+
+				unsafe { favorite_button.set_data("click-handler", handler_id) };
 
 				let stack = overlay.child().unwrap().downcast::<gtk::Stack>().unwrap();
 				let title = children.item(1).unwrap().downcast::<gtk::Label>().unwrap();
@@ -1297,14 +1380,21 @@ impl App {
 		});
 	}
 
-	fn apply_game_filter(&self) {
+	fn apply_filters(&self) {
 		let selected_game = self.selected_game;
+		let show_favorited_only = self.show_favorited_only;
+
 		self.clips_data.filter.set_filter_func(move |obj| {
 			let clip = obj.downcast_ref::<ClipObject>().unwrap().clip();
-			match selected_game {
+
+			let game_match = match selected_game {
 				None => true,
 				Some(game) => clip.game.map(|id| game == id).unwrap_or(false),
-			}
+			};
+
+			let favorite_match = !show_favorited_only || clip.favorited;
+
+			return game_match && favorite_match;
 		});
 	}
 
@@ -1379,6 +1469,24 @@ impl App {
 		let tx = sender.input_sender();
 		match msg {
 			Message::Void => {}
+			Message::SetFavoritedFilter(favorited) => {
+				self.show_favorited_only = favorited;
+				self.apply_filters();
+
+				if favorited {
+					if self.db.get_clips()?.iter().all(|x| !x.favorited) {
+						self.main_stack.set_visible_child_name("empty-favorites");
+					} else {
+						self.set_main_stack()?;
+					}
+				} else {
+					self.set_main_stack()?;
+				}
+			}
+			Message::ClipFavorited(id, favorited) => {
+				self.db.favorite_clip(id, favorited)?;
+				tx.emit(Message::LoadClips);
+			}
 			Message::AddCustomAction => {
 				self.db
 					.create_custom_action()
@@ -1638,7 +1746,7 @@ Note: You must restart Replayd to apply the changes.
 
 				let mut scores = self.clips_data.scores.write().map_err(|x| eyre!("{x}"))?;
 				scores.clear();
-				self.games.guard().send(0, true);
+				self.game_filter_dropdown.set_selected(0);
 				if !query.is_empty() {
 					let mut searcher = search::Searcher::new();
 					for i in 0..self.clips_data.store.n_items() {
@@ -1676,7 +1784,7 @@ Note: You must restart Replayd to apply the changes.
 					}
 				} else {
 					drop(scores);
-					self.apply_game_filter();
+					self.apply_filters();
 				}
 
 				self.apply_sort();
@@ -1896,39 +2004,25 @@ Note: You must restart Replayd to apply the changes.
 			}
 			Message::LoadGames => {
 				let games = self.db.get_games()?;
-				let mut guard = self.games.guard();
-				guard.clear();
-				guard.push_back((0, "All games".to_string()));
-				for game in games {
-					guard.push_back((
-						game.id,
-						identifier::get_game(game.game_id)
-							.map(|x| x.name.clone())
-							.context("could not get game name")?,
-					));
-				}
-				guard.send(0, true);
-			}
-			Message::GameDeselected => {
-				let guard = self.games.guard();
-				if !guard.iter().any(|x| x.selected()) {
-					guard.send(0, true);
-				}
-			}
-			Message::GameSelected(index) => {
-				let guard = self.games.guard();
-				for i in 0..guard.len() {
-					guard.send(i, i == index.current_index());
-				}
+				self.game_filter_ids = std::iter::once(None)
+					.chain(games.iter().map(|g| Some(g.id)))
+					.collect();
 
-				self.selected_game = if index.current_index() == 0 {
-					None
-				} else {
-					guard.get(index.current_index()).map(|chip| chip.game_id)
-				};
+				let names: Vec<&str> = std::iter::once("All games")
+					.chain(
+						games
+							.iter()
+							.filter_map(|g| identifier::get_game(g.game_id).map(|x| x.name.as_str())),
+					)
+					.collect();
 
-				drop(guard);
-				self.apply_game_filter();
+				self.game_filter_dropdown
+					.set_model(Some(&gtk::StringList::new(&names)));
+				self.game_filter_dropdown.set_selected(0);
+			}
+			Message::GameFilterChanged(index) => {
+				self.selected_game = self.game_filter_ids.get(index as usize).copied().flatten();
+				self.apply_filters();
 			}
 			Message::SaveClip => self.recorder.clip()?,
 			Message::ToggleClipping => {
@@ -2022,6 +2116,7 @@ Note: You must restart Replayd to apply the changes.
 					.db
 					.save_clip(Clip {
 						id: 0,
+						favorited: false,
 						title: "Untitled".to_string(),
 						path: relative_path,
 						codec: self.settings.codec,
@@ -2076,61 +2171,6 @@ impl FactoryComponent for CustomActionRow {
 
 	fn init_model(action: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
 		return Self { action };
-	}
-}
-
-#[derive(Debug)]
-struct GameChip {
-	name: String,
-	game_id: ObjectId,
-	selected: Arc<AtomicBool>,
-}
-
-impl GameChip {
-	pub fn selected(&self) -> bool {
-		return self.selected.load(Ordering::Relaxed);
-	}
-}
-
-#[relm4::factory]
-impl FactoryComponent for GameChip {
-	type Init = (ObjectId, String);
-	type Input = bool;
-	type Output = Message;
-	type CommandOutput = ();
-	type ParentWidget = gtk::Box;
-
-	view! {
-		gtk::ToggleButton {
-			set_label: &self.name,
-			add_css_class: "pill",
-
-			#[watch]
-			set_active: self.selected.load(Ordering::Relaxed),
-
-			connect_toggled[sender, index, selected = self.selected.clone()] => move |btn| {
-				if btn.is_active() {
-					selected.store(true, Ordering::Relaxed);
-					sender.output(Message::GameSelected(index.clone())).unwrap();
-				} else {
-					selected.store(false, Ordering::Relaxed);
-					sender.output(Message::GameDeselected).unwrap();
-				}
-			}
-		}
-	}
-
-	fn init_model((game_id, name): Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
-		return Self {
-			name,
-			game_id,
-			selected: Arc::new(AtomicBool::new(false)),
-		};
-	}
-
-	fn update(&mut self, selected: Self::Input, _sender: FactorySender<Self>) {
-		self.selected.store(selected, Ordering::Relaxed);
-		// self.selected = selected;
 	}
 }
 

@@ -26,3 +26,16 @@
 	padding: 2px 5px;
 	color: white;
 }
+
+.favorite-btn {
+	padding: 2px;
+	background: rgba(0, 0, 0, 0.55);
+}
+
+.favorite-btn:hover {
+	background: rgba(0, 0, 0, 0.7);
+}
+
+.favorite-btn:active {
+	background: rgba(0, 0, 0, 0.85);
+}

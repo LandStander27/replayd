@@ -149,6 +149,21 @@ impl Db {
 		return Ok(clip);
 	}
 
+	pub fn favorite_clip(&self, id: ObjectId, favorited: bool) -> Result<()> {
+		return self.write(|writer| {
+			let mut table = writer.open_table(CLIPS_TABLE)?;
+			let mut json = table
+				.get_mut(id)
+				.context("could not get clip")?
+				.context("invalid clip")?;
+			let mut clip = Clip::decode(json.value())?;
+			clip.favorited = favorited;
+			json.insert(clip.encode()?.as_slice())
+				.context("could not modify clip")?;
+			return Ok(());
+		});
+	}
+
 	pub fn rename_clip(&self, id: ObjectId, title: impl Into<String>) -> Result<()> {
 		return self.write(|writer| {
 			let mut table = writer.open_table(CLIPS_TABLE)?;
