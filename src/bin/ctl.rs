@@ -32,9 +32,13 @@ enum Commands {
 
 	/// tell replayd to toggle clipping
 	Toggle,
+
+	/// get the currently identified game
+	Identify,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
 	color_eyre::install().context("could not install handler")?;
 
 	let args = Args::parse();
@@ -44,15 +48,13 @@ fn main() -> Result<()> {
 		.join("replayd")
 		.join("socket.sock");
 
-	if !socket_path.exists() {
-		eprintln!("{socket_path:?} does not exist\nare you sure Replayd is running?");
-		std::process::exit(1);
-	}
-
-	let mut stream = UnixStream::connect(&socket_path).context("could not open stream")?;
-
 	match args.command {
 		Commands::Db => {
+			if !socket_path.exists() {
+				eprintln!("{socket_path:?} does not exist\nare you sure Replayd is running?");
+				std::process::exit(1);
+			}
+			let mut stream = UnixStream::connect(&socket_path).context("could not open stream")?;
 			stream
 				.write_all(b"get/db")
 				.context("could not write to socket")?;
@@ -68,6 +70,11 @@ fn main() -> Result<()> {
 			print!("{response}");
 		}
 		Commands::Games => {
+			if !socket_path.exists() {
+				eprintln!("{socket_path:?} does not exist\nare you sure Replayd is running?");
+				std::process::exit(1);
+			}
+			let mut stream = UnixStream::connect(&socket_path).context("could not open stream")?;
 			stream
 				.write_all(b"get/games")
 				.context("could not write to socket")?;
@@ -82,12 +89,42 @@ fn main() -> Result<()> {
 
 			print!("{response}");
 		}
-		Commands::Clip => stream
-			.write_all(b"signal/clip")
-			.context("could not write to socket")?,
-		Commands::Toggle => stream
-			.write_all(b"signal/toggle")
-			.context("could not write to socket")?,
+		Commands::Identify => {
+			let window_manager = replayd::identifier::get_window_manager().context("could not find window manager")?;
+			let window = window_manager
+				.get_focused_window()
+				.await
+				.context("could not get current window")?;
+
+			println!("Window: {window:#?}\n");
+			replayd::identifier::get_games().await?;
+			if let Some(game) = replayd::identifier::identify_game(&window) {
+				let game = replayd::identifier::get_game(game).context("invalid game")?;
+				println!("{}", game.name);
+			} else {
+				println!("Game is unknown");
+			}
+		}
+		Commands::Clip => {
+			if !socket_path.exists() {
+				eprintln!("{socket_path:?} does not exist\nare you sure Replayd is running?");
+				std::process::exit(1);
+			}
+			let mut stream = UnixStream::connect(&socket_path).context("could not open stream")?;
+			stream
+				.write_all(b"signal/clip")
+				.context("could not write to socket")?;
+		}
+		Commands::Toggle => {
+			if !socket_path.exists() {
+				eprintln!("{socket_path:?} does not exist\nare you sure Replayd is running?");
+				std::process::exit(1);
+			}
+			let mut stream = UnixStream::connect(&socket_path).context("could not open stream")?;
+			stream
+				.write_all(b"signal/toggle")
+				.context("could not write to socket")?;
+		}
 	}
 
 	return Ok(());
