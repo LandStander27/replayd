@@ -5,9 +5,9 @@ pub struct Hyprland;
 #[async_trait]
 impl WindowManager for Hyprland {
 	async fn get_focused_window(&self) -> Result<Window> {
-		let instance = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").context("could not get HYPRLAND_INSTANCE_SIGNATURE")?;
+		let instance = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").context("could not get $HYPRLAND_INSTANCE_SIGNATURE")?;
 		let socket_path = dirs::runtime_dir()
-			.context("could not get XDG_RUNTIME_DIR")?
+			.context("could not get $XDG_RUNTIME_DIR")?
 			.join("hypr")
 			.join(instance)
 			.join(".socket.sock");
@@ -39,7 +39,12 @@ impl WindowManager for Hyprland {
 			.join("cmdline");
 		let mut cmdline: Vec<String> = std::fs::read_to_string(&cmdline)
 			.with_context(|| format!("could not read {cmdline:?}"))
-			.map(|x| x.split('\0').map(|x| x.trim().to_string()).collect())
+			.map(|x| {
+				x.split('\0')
+					.map(|x| x.trim().to_string())
+					.filter(|x| !x.is_empty()) // some things have hundreds of empty args for some reason
+					.collect()
+			})
 			.show_error()
 			.unwrap_or_default();
 		let executable = if cmdline.is_empty() {
