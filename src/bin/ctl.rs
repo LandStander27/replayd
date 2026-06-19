@@ -1,4 +1,5 @@
 #![allow(clippy::needless_return)]
+#![cfg(feature = "socket_commands")]
 
 use clap::{Parser, Subcommand};
 pub use color_eyre::{
