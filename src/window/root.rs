@@ -226,7 +226,7 @@ impl AsyncComponent for App {
 
 						gtk::Label {
 							#[watch]
-							set_label: &format!("{}p · {} fps · {}", app.settings.resolution.get_str("display").unwrap(), app.settings.frame_rate.get_str("display").unwrap(), app.settings.codec.get_str("display").unwrap()),
+							set_label: &format!("{} · {} fps · {}", app.settings.resolution.get_str("display").unwrap(), app.settings.frame_rate.get_str("display").unwrap(), app.settings.codec.get_str("display").unwrap()),
 							set_halign: gtk::Align::Start,
 							add_css_class: "caption",
 							add_css_class: "dim-label",
