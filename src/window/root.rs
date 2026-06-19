@@ -1975,6 +1975,13 @@ Note: You must restart Replayd to apply the changes.
 				tx.emit(Message::LoadGames);
 				info!("loading clips");
 				tx.emit(Message::LoadClips);
+
+				if let Ok(path) = std::env::current_exe()
+					&& let Some(path) = path.parent()
+					&& !path.join("replayd-hook").exists()
+				{
+					tx.emit(Message::Error("replayd-hook cannot be found\nClipping WILL not work!".to_string()));
+				}
 			}
 			Message::LoadClips => {
 				if self
