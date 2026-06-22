@@ -68,7 +68,7 @@ impl ksni::Tray for Tray {
 	}
 
 	fn activate(&mut self, _x: i32, _y: i32) {
-		self.tx.emit(Message::ShowWindow);
+		self.tx.emit(Message::ToggleWindow);
 	}
 }
 

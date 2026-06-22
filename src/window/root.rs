@@ -58,6 +58,7 @@ pub enum Message {
 	LoadSettings,
 	Close,
 	ShowWindow,
+	ToggleWindow,
 	Exit,
 	ShowAbout,
 	Init,
@@ -1936,6 +1937,13 @@ Note: You must restart Replayd to apply the changes.
 			}
 			Message::Error(e) => self.error_dialog.show(e),
 			Message::Close => self.visible = false,
+			Message::ToggleWindow => {
+				if self.visible {
+					tx.emit(Message::Close);
+				} else {
+					tx.emit(Message::ShowWindow);
+				}
+			}
 			Message::ShowWindow => {
 				self.visible = true;
 				tx.emit(Message::LoadClips); // update timestamps on clips
