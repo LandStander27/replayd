@@ -36,7 +36,7 @@ The actual screen/audio capture is performed by [gpu-screen-recorder](https://gi
 
 ## Features
 
-- **Background instant replay** — `replayd` continuously buffers your screen while running in the background so you never miss a clutch moment, a hilarious bug, or a rage-quit-worthy death.
+- **Background instant replay** — `replayd` continuously buffers your screen while running in the background so you never miss a clutch, a funny bug, or a rage-quit-worthy death.
 - **GPU-accelerated capture** — Recording itself is handled by [`gpu-screen-recorder`](https://git.dec05eba.com/gpu-screen-recorder/about/), which `replayd` runs and controls under the hood. This keeps capture overhead low and lets you take advantage of your GPU's hardware encoder.
 - **Global shortcut clipping, the desktop-native way** — Save the last N seconds of buffered footage on demand, using a shortcut registered through the `xdg-desktop-portal` **GlobalShortcuts** portal. This means `replayd` doesn't read raw input devices or need special permissions to catch your hotkey — it works through whatever portal backend your desktop/compositor provides, and the shortcut itself is configured the same way as any other portal-based shortcut on your system.
 - **Native clip library GUI** — Browse saved clips from within the app, complete with:
@@ -230,12 +230,6 @@ If you run into an issue not covered here, please open an issue on the [Codeberg
 ## License
 
 `replayd` is licensed under the **MIT License**. See [LICENSE](./LICENSE) for the full text.
-
-```
-MIT License
-
-Copyright (c) 2026 LandStander27
-```
 
 ---
 
