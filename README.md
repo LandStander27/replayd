@@ -64,10 +64,11 @@ Because capture happens continuously in a fixed-duration buffer rather than reco
 replayd/
 ├── .forgejo/workflows/   # CI configuration (Forgejo Actions)
 ├── assets/               # Icons, .desktop files, and other install assets
-├── hooks/                # Hooks used for capture/clip-trigger integration
-├── src/                  # Rust source for replayd and the optional replaydctl CLI
-├── version/              # Versioning metadata
+├── hooks/                # Git hooks to ensure quality when making changes
+├── src/                  # Rust source for replayd, replayd-hook, and replaydctl
+├── version/              # Auto versioning crate
 ├── Cargo.toml            # Workspace manifest
+├── README.md             # Me
 └── LICENSE               # MIT license
 ```
 
