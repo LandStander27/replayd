@@ -234,7 +234,7 @@ If you run into an issue not covered here, please open an issue on the [Codeberg
 ```
 MIT License
 
-Copyright (c) 2024 LandStander27
+Copyright (c) 2026 LandStander27
 ```
 
 ---
