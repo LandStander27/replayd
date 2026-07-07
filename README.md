@@ -120,7 +120,7 @@ This produces three binaries under `target/release/`:
 - **`replayd`** — the main application: GUI, clip library, and instant-replay engine.
 - **`replayd-hook`** — a small companion binary needed as a callback for `gpu-screen-recorder`, so `replayd` can index the clips saved.
 - **`replaydctl`** — a command-line control tool for talking to a running `replayd` instance over a local socket.
-  The `socket_commands` feature enables the socket-based control interface that `replaydctl` both relies on. If you only want the GUI application and don't need scripting/hook support, you can omit it:
+  The `socket_commands` feature enables the socket-based control interface that `replaydctl` relies on. If you only want the GUI application and don't need scripting/hook support, you can omit it:
 
 ```bash
 cargo build --release --locked
