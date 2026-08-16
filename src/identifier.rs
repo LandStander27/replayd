@@ -4,6 +4,7 @@ use tokio::sync::OnceCell;
 use crate::prelude::*;
 
 mod hypr;
+mod kde;
 
 static IDENTIFIABLE_GAMES: OnceCell<Vec<IdentifiableGame>> = OnceCell::const_new();
 
@@ -136,11 +137,36 @@ pub fn get_window_manager() -> Result<Box<dyn WindowManager>> {
 			.as_str()
 		{
 			"Hyprland" => Box::new(hypr::Hyprland),
-			"KDE" => todo!("will have to use kdotool"),
-			"GNOME" => todo!("will have to write a gnome extension that opens a socket or something "),
+			"KDE" => Box::new(kde::Kde),
+			"GNOME" => todo!("will have to write a gnome extension that opens a socket or something"),
 			s => {
 				return Err(eyre!("{s} is unknown")); // TODO: add more
 			}
 		},
 	);
+}
+
+pub(super) async fn get_cmdline(pid: u64) -> Result<(Option<String>, Vec<String>)> {
+	let cmdline = PathBuf::from("/proc")
+		.join(format!("{pid}"))
+		.join("cmdline");
+	let mut cmdline: Vec<String> = std::fs::read_to_string(&cmdline)
+		.with_context(|| format!("could not read {cmdline:?}"))
+		.map(|x| {
+			x.split('\0')
+				.map(|x| x.trim().to_string())
+				.filter(|x| !x.is_empty()) // some things have hundreds of empty args for some reason
+				.collect()
+		})
+		.show_error()
+		.unwrap_or_default();
+	let executable = if cmdline.is_empty() {
+		None
+	} else {
+		PathBuf::from(cmdline.remove(0))
+			.file_name()
+			.map(|x| x.to_string_lossy().to_string())
+	};
+
+	return Ok((executable, cmdline));
 }
