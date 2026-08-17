@@ -2072,11 +2072,18 @@ Note: You must restart Replayd to apply the changes.
 				}
 
 				info!("clip recv: {path:?}");
-				let window = self
+				let window = match self
 					.window_manager
 					.get_focused_window()
 					.await
-					.context("could not get current window")?;
+					.context("could not get current window")
+				{
+					Ok(o) => Some(o),
+					Err(e) => {
+						sender.input(Message::Error(format!("{e:#}")));
+						None
+					}
+				};
 				info!("window: {window:?}");
 
 				let relative_path = path
@@ -2084,7 +2091,9 @@ Note: You must restart Replayd to apply the changes.
 					.context("invalid clip recv")?
 					.to_path_buf();
 
-				let game = if window.fullscreen {
+				let game = if let Some(window) = window
+					&& window.fullscreen
+				{
 					identifier::identify_game(&window)
 						.map(|game_id| {
 							let games = self.db.get_games()?;
