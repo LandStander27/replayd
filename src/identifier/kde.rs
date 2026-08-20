@@ -20,11 +20,18 @@ async fn info(id: &str) -> Result<Window> {
 	let proxy = Proxy::new(&connection, "org.kde.KWin", "/KWin", "org.kde.KWin").await?;
 	let info: HashMap<String, OwnedValue> = proxy.call("getWindowInfo", &(id,)).await?;
 
-	let title = info.get("caption").context("missing title")?.to_string();
+	let title = info
+		.get("caption")
+		.context("missing title")?
+		.clone()
+		.try_into()
+		.context("title is not a String")?;
 	let class = info
 		.get("resourceClass")
 		.context("missing class")?
-		.to_string();
+		.clone()
+		.try_into()
+		.context("class is not a String")?;
 	let fullscreen = info
 		.get("fullscreen")
 		.context("missing fullscreen")?
