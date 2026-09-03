@@ -615,6 +615,7 @@ impl AsyncComponent for App {
 		main_window = adw::ApplicationWindow {
 			set_title: Some(&title),
 			add_css_class?: app.additional_css_class,
+			set_default_size: (1000, 800),
 
 			#[watch]
 			set_visible: app.visible,
