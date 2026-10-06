@@ -42,7 +42,8 @@ image = "0.25.10"
 redb = { version = "4.1.0", features = ["uuid"] }
 serde = { version = "1.0.228", features = ["derive"] }
 dirs = "6.0.0"
-serde_json = "1.0.150"
+serde_json = "1.0.151"
+jsonc-parser = { version = "0.34.0", features = ["serde"] }
 display-info = "0.5.9"
 async-trait = "0.1.89"
 ashpd = { version = "0.13.11", features = [

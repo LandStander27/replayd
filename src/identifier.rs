@@ -44,11 +44,8 @@ pub async fn get_games() -> Result<()> {
 	let json: String = response
 		.text()
 		.await
-		.context("could not get text from request")?
-		.lines()
-		.filter(|x| !x.starts_with("//")) // why does json not support comments !!!!!!!
-		.collect();
-	let parsed: Vec<IdentifiableGame> = serde_json::from_str(&json).context("could not parse json from request")?;
+		.context("could not get text from request")?;
+	let parsed: Vec<IdentifiableGame> = jsonc_parser::parse_to_serde_value(&json, &Default::default()).context("could not parse json from request")?;
 
 	IDENTIFIABLE_GAMES
 		.set(parsed)
